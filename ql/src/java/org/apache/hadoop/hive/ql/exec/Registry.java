@@ -255,6 +255,11 @@ public class Registry {
           functionName, SessionState.get().getCurrentDatabase().toLowerCase());
       functionInfo = getQualifiedFunctionInfo(qualifiedName);
     }
+    if (functionInfo == null) {
+      String qualifiedName = FunctionUtils.qualifyFunctionName(
+              functionName, "default");
+      functionInfo = getQualifiedFunctionInfo(qualifiedName);
+    }
     return functionInfo;
   }
 
