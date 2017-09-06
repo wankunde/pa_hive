@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.paic.data.hive</groupId>
-    <artifactId>server2auth</artifactId>
+    <artifactId>paicAuth</artifactId>
     <version>1.0</version>
 
 

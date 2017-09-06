@@ -46,6 +46,8 @@ public class PaicHiveServer2Auth implements PasswdAuthenticationProvider {
         }
         if (StringUtils.isNotBlank(username) && StringUtils.isNotBlank(username)
                 && password.equals(auth.get(username))) {
+            HiveConf hiveConf = new HiveConf();
+            hiveConf.set("dsp.submit.user", username + ":hiveServer2");
             LOG.info("user [" + username + "] auth check ok .. ");
         } else {
             LOG.info("user [" + username + "] auth check fail .. ");
@@ -54,11 +56,9 @@ public class PaicHiveServer2Auth implements PasswdAuthenticationProvider {
     }
 
     public static void querydb() {
-        HiveConf hiveConf = new HiveConf();
-        Configuration conf = new Configuration(hiveConf);
-        String username = conf.get("javax.jdo.option.ConnectionUserName");
-        String password = conf.get("javax.jdo.option.ConnectionPassword");
-        String url = conf.get("javax.jdo.option.ConnectionURL");
+        String username = "hive";
+        String password = "hive123";
+        String url = "jdbc:mysql://26.6.0.31/metastore?createDatabaseIfNotExist=true&amp;characterEncoding=UTF-8";
 
         Connection conn = null;
         Statement stmt = null;
