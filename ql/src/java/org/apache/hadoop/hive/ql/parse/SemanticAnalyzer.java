@@ -10412,7 +10412,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
               continue;
             }
             PrunedPartitionList parts = pCtx.getOpToPartList().get(topOp);
-            if (parts.getPartitions().size() > scanLimit) {
+            if (parts != null && parts.getPartitions().size() > scanLimit) {
               throw new SemanticException(ErrorMsg.PARTITION_SCAN_LIMIT_EXCEEDED, ""
                   + parts.getPartitions().size(), "" + parts.getSourceTable().getTableName(), ""
                   + scanLimit);
