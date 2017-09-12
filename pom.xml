@@ -161,7 +161,7 @@
     <stax.version>1.0.1</stax.version>
     <slf4j.version>${cdh.slf4j.version}</slf4j.version>
     <ST4.version>4.0.4</ST4.version>
-    <tez.version>0.5.2</tez.version>
+    <tez.version>0.7.1</tez.version>
     <super-csv.version>2.2.0</super-csv.version>
     <spark.version>${cdh.spark.version}</spark.version>
     <scala.binary.version>2.10</scala.binary.version>
