@@ -27,12 +27,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import org.apache.hadoop.hive.ql.plan.Explain.Level;
 
 /**
  * Map Join operator Descriptor implementation.
  *
  */
-@Explain(displayName = "Map Join Operator")
+@Explain(displayName = "Map Join Operator", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
 public class MapJoinDesc extends JoinDesc implements Serializable {
   private static final long serialVersionUID = 1L;
 
@@ -52,9 +53,7 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
   // TODO: should these rather be arrays?
   private Map<Integer, String> parentToInput = new HashMap<Integer, String>();
   private Map<Integer, Long> parentKeyCounts = new HashMap<Integer, Long>();
-
-  // for tez. used to remember which type of a Bucket Map Join this is.
-  private boolean customBucketMapJoin;
+  private Map<Integer, Long> parentDataSizes = new HashMap<Integer, Long>();
 
   // table alias (small) --> input file name (big) --> target file names (small)
   private Map<String, Map<String, List<String>>> aliasBucketFileNameMapping;
@@ -68,15 +67,22 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
   private boolean isBucketMapJoin;
 
   // Hash table memory usage allowed; used in case of non-staged mapjoin.
-  private float hashtableMemoryUsage;
+  private float hashtableMemoryUsage;   // This is a percentage value between 0 and 1
   protected boolean genJoinKeys = true;
 
+  private boolean isHybridHashJoin;
+
+  // Extra parameters only for vectorization.
+  private VectorMapJoinDesc vectorDesc;
+
   public MapJoinDesc() {
+    vectorDesc = new VectorMapJoinDesc();
     bigTableBucketNumMapping = new LinkedHashMap<String, Integer>();
   }
 
   public MapJoinDesc(MapJoinDesc clone) {
     super(clone);
+    vectorDesc = new VectorMapJoinDesc(clone.vectorDesc);
     this.keys = clone.keys;
     this.keyTblDesc = clone.keyTblDesc;
     this.valueTblDescs = clone.valueTblDescs;
@@ -90,7 +96,9 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
     this.dumpFilePrefix = clone.dumpFilePrefix;
     this.parentToInput = clone.parentToInput;
     this.parentKeyCounts = clone.parentKeyCounts;
-    this.customBucketMapJoin = clone.customBucketMapJoin;
+    this.parentDataSizes = clone.parentDataSizes;
+    this.isBucketMapJoin = clone.isBucketMapJoin;
+    this.isHybridHashJoin = clone.isHybridHashJoin;
   }
 
   public MapJoinDesc(final Map<Byte, List<ExprNodeDesc>> keys,
@@ -99,6 +107,7 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
       final int posBigTable, final JoinCondDesc[] conds,
       final Map<Byte, List<ExprNodeDesc>> filters, boolean noOuterJoin, String dumpFilePrefix) {
     super(values, outputColumnNames, noOuterJoin, conds, filters, null);
+    vectorDesc = new VectorMapJoinDesc();
     this.keys = keys;
     this.keyTblDesc = keyTblDesc;
     this.valueTblDescs = valueTblDescs;
@@ -107,6 +116,14 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
     this.bigTableBucketNumMapping = new LinkedHashMap<String, Integer>();
     this.dumpFilePrefix = dumpFilePrefix;
     initRetainExprList();
+  }
+
+  public void setVectorDesc(VectorMapJoinDesc vectorDesc) {
+    this.vectorDesc = vectorDesc;
+  }
+
+  public VectorMapJoinDesc getVectorDesc() {
+    return vectorDesc;
   }
 
   private void initRetainExprList() {
@@ -123,7 +140,7 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
     }
   }
 
-  @Explain(displayName = "input vertices")
+  @Explain(displayName = "input vertices", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public Map<Integer, String> getParentToInput() {
     return parentToInput;
   }
@@ -136,7 +153,11 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
     return parentKeyCounts;
   }
 
-  @Explain(displayName = "Estimated key counts", normalExplain = false)
+  public Map<Integer, Long> getParentDataSizes() {
+    return parentDataSizes;
+  }
+
+  @Explain(displayName = "Estimated key counts", explainLevels = { Level.EXTENDED })
   public String getKeyCountsExplainDesc() {
     StringBuilder result = null;
     for (Map.Entry<Integer, Long> entry : parentKeyCounts.entrySet()) {
@@ -193,7 +214,7 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
    * @return the keys in string form
    */
   @Override
-  @Explain(displayName = "keys")
+  @Explain(displayName = "keys", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public Map<Byte, String> getKeysString() {
     Map<Byte, String> keyMap = new LinkedHashMap<Byte, String>();
     for (Map.Entry<Byte, List<ExprNodeDesc>> k: getKeys().entrySet()) {
@@ -220,7 +241,7 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
   /**
    * @return the position of the big table not in memory
    */
-  @Explain(displayName = "Position of Big Table", normalExplain = false)
+  @Explain(displayName = "Position of Big Table", explainLevels = { Level.EXTENDED })
   public int getPosBigTable() {
     return posBigTable;
   }
@@ -310,13 +331,22 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
     this.bigTablePartSpecToFileMapping = partToFileMapping;
   }
 
-  @Explain(displayName = "BucketMapJoin", normalExplain = false, displayOnlyOnTrue = true)
+  @Explain(displayName = "BucketMapJoin", explainLevels = { Level.EXTENDED }, displayOnlyOnTrue = true)
   public boolean isBucketMapJoin() {
     return isBucketMapJoin;
   }
 
   public void setBucketMapJoin(boolean isBucketMapJoin) {
     this.isBucketMapJoin = isBucketMapJoin;
+  }
+
+  @Explain(displayName = "HybridGraceHashJoin", displayOnlyOnTrue = true)
+  public boolean isHybridHashJoin() {
+    return isHybridHashJoin;
+  }
+
+  public void setHybridHashJoin(boolean isHybridHashJoin) {
+    this.isHybridHashJoin = isHybridHashJoin;
   }
 
   public void setHashTableMemoryUsage(float hashtableMemoryUsage) {
@@ -327,14 +357,7 @@ public class MapJoinDesc extends JoinDesc implements Serializable {
     return hashtableMemoryUsage;
   }
 
-  public void setCustomBucketMapJoin(boolean customBucketMapJoin) {
-    this.customBucketMapJoin = customBucketMapJoin;
-  }
-
-  public boolean getCustomBucketMapJoin() {
-    return this.customBucketMapJoin;
-  }
-
+  @Override
   public boolean isMapSideJoin() {
     return true;
   }

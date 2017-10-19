@@ -18,20 +18,46 @@
 
 package org.apache.hive.beeline;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 
 import java.io.File;
 import java.io.FileOutputStream;
 
-import junit.framework.Assert;
-
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hive.common.util.HiveTestUtils;
+import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 /**
  * Unit test for Beeline arg parser.
  */
+@RunWith(Parameterized.class)
 public class TestBeelineArgParsing {
+  private static final Log LOG = LogFactory.getLog(TestBeelineArgParsing.class.getName());
+
+  private static final String dummyDriverClazzName = "DummyDriver";
+
+  private String connectionString;
+  private String driverClazzName;
+  private String driverJarFileName;
+  private boolean defaultSupported;
+
+  public TestBeelineArgParsing(String connectionString, String driverClazzName, String driverJarFileName,
+                               boolean defaultSupported) {
+    this.connectionString = connectionString;
+    this.driverClazzName = driverClazzName;
+    this.driverJarFileName = driverJarFileName;
+    this.defaultSupported = defaultSupported;
+  }
 
   public class TestBeeline extends BeeLine {
 
@@ -52,6 +78,29 @@ public class TestBeelineArgParsing {
       }
       return true;
     }
+
+    public boolean addlocaldrivername(String driverName) {
+      String line = "addlocaldrivername " + driverName;
+      return getCommands().addlocaldrivername(line);
+    }
+
+    public boolean addLocalJar(String url){
+      String line = "addlocaldriverjar " + url;
+      return getCommands().addlocaldriverjar(line);
+    }
+  }
+
+  @Parameters public static Collection<Object[]> data() throws IOException, InterruptedException {
+    // generate the dummy driver by using txt file
+    String u = HiveTestUtils.getFileFromClasspath("DummyDriver.txt");
+    File jarFile = HiveTestUtils.genLocalJarForTest(u, dummyDriverClazzName);
+    String pathToDummyDriver = jarFile.getAbsolutePath();
+    return Arrays.asList(new Object[][] {
+        { "jdbc:postgresql://host:5432/testdb", "org.postgresql.Driver",
+            System.getProperty("maven.local.repository") + File.separator + "postgresql"
+                + File.separator + "postgresql" + File.separator + "9.1-901.jdbc4" + File.separator
+                + "postgresql-9.1-901.jdbc4.jar", true },
+        { "jdbc:dummy://host:5432/testdb", dummyDriverClazzName, pathToDummyDriver, false } });
   }
 
   @Test
@@ -59,7 +108,7 @@ public class TestBeelineArgParsing {
     TestBeeline bl = new TestBeeline();
     String args[] = new String[] {"-u", "url", "-n", "name",
       "-p", "password", "-d", "driver", "-a", "authType"};
-    Assert.assertEquals(0, bl.initArgs(args));
+    org.junit.Assert.assertEquals(0, bl.initArgs(args));
     Assert.assertTrue(bl.connectArgs.equals("url name password driver"));
     Assert.assertTrue(bl.getOpts().getAuthType().equals("authType"));
   }
@@ -169,4 +218,30 @@ public class TestBeelineArgParsing {
     Assert.assertEquals(-1, bl.initArgs(args));
   }
 
+  @Test
+  public void testAddLocalJar() throws Exception {
+    TestBeeline bl = new TestBeeline();
+    Assert.assertNull(bl.findLocalDriver(connectionString));
+
+    LOG.info("Add " + driverJarFileName + " for the driver class " + driverClazzName);
+
+    bl.addLocalJar(driverJarFileName);
+    bl.addlocaldrivername(driverClazzName);
+    Assert.assertEquals(bl.findLocalDriver(connectionString).getClass().getName(), driverClazzName);
+  }
+
+  @Test
+  public void testAddLocalJarWithoutAddDriverClazz() throws Exception {
+    TestBeeline bl = new TestBeeline();
+
+    LOG.info("Add " + driverJarFileName + " for the driver class " + driverClazzName);
+    bl.addLocalJar(driverJarFileName);
+    if (!defaultSupported) {
+      Assert.assertNull(bl.findLocalDriver(connectionString));
+    } else {
+      // no need to add for the default supported local jar driver
+      Assert.assertNotNull(bl.findLocalDriver(connectionString));
+      Assert.assertEquals(bl.findLocalDriver(connectionString).getClass().getName(), driverClazzName);
+    }
+  }
 }

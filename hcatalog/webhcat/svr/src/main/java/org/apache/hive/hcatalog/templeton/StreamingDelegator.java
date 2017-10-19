@@ -38,7 +38,7 @@ public class StreamingDelegator extends LauncherDelegator {
   }
 
   public EnqueueBean run(String user, Map<String, Object> userArgs,
-               List<String> inputs, String output,
+               List<String> inputs, String inputreader, String output,
                String mapper, String reducer, String combiner,
                List<String> fileList,
                String files, List<String> defines,
@@ -48,20 +48,22 @@ public class StreamingDelegator extends LauncherDelegator {
                String callback,
                String completedUrl,
                boolean enableLog,
+               Boolean enableJobReconnect,
                JobType jobType)
     throws NotAuthorizedException, BadParam, BusyException, QueueException,
     ExecuteException, IOException, InterruptedException {
-    List<String> args = makeArgs(inputs, output, mapper, reducer, combiner,
+      List<String> args = makeArgs(inputs, inputreader, output, mapper, reducer, combiner,
       fileList, cmdenvs, jarArgs);
 
     JarDelegator d = new JarDelegator(appConf);
     return d.run(user, userArgs,
       appConf.streamingJar(), null,
       null, files, args, defines,
-      statusdir, callback, false, completedUrl, enableLog, jobType);
+      statusdir, callback, false, completedUrl, enableLog, enableJobReconnect, jobType);
   }
 
   private List<String> makeArgs(List<String> inputs,
+                  String inputreader,
                   String output,
                   String mapper,
                   String reducer,
@@ -82,6 +84,11 @@ public class StreamingDelegator extends LauncherDelegator {
     args.add(mapper);
     args.add("-reducer");
     args.add(reducer);
+    
+    if (inputreader != null && !inputreader.isEmpty()) {
+      args.add("-inputreader");
+      args.add(inputreader);
+    }
 
     if (TempletonUtils.isset(combiner)) {
       args.add("-combiner");

@@ -18,8 +18,6 @@
 
 package org.apache.hadoop.hive.ql.exec.vector.expressions;
 
-import java.io.IOException;
-import java.io.OutputStream;
 import org.apache.hadoop.hive.ql.exec.vector.DoubleColumnVector;
 
 /**
@@ -75,10 +73,17 @@ public class MathExpr {
     return v == 0.0D ? 0L : 1L;
   }
 
-  /* Convert an integer value in miliseconds since the epoch to a timestamp value
+  /* Convert an integer value in seconds since the epoch to a timestamp value
    * for use in a long column vector, which is represented in nanoseconds since the epoch.
    */
   public static long longToTimestamp(long v) {
+    return v * 1000000000;
+  }
+
+  /* Convert an integer value in milliseconds since the epoch to a timestamp value
+   * for use in a long column vector, which is represented in nanoseconds since the epoch.
+   */
+  public static long millisecondsLongToTimestamp(long v) {
     return v * 1000000;
   }
 

@@ -17,19 +17,20 @@
  */
 package org.apache.hadoop.hive.metastore;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.fail;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.hive.UtilsForTest;
 import org.apache.hadoop.hive.cli.CliSessionState;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.Index;
+import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.PartitionSpec;
@@ -37,8 +38,8 @@ import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.Driver;
 import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.hive.shims.ShimLoader;
-import org.junit.After;
-import org.junit.Before;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.google.common.collect.Lists;
@@ -53,7 +54,7 @@ public class TestFilterHooks {
     }
 
     @Override
-    public List<String> filterDatabases(List<String> dbList) {
+    public List<String> filterDatabases(List<String> dbList) throws MetaException  {
       if (blockResults) {
         return new ArrayList<String>();
       }
@@ -69,7 +70,7 @@ public class TestFilterHooks {
     }
 
     @Override
-    public List<String> filterTableNames(String dbName, List<String> tableList) {
+    public List<String> filterTableNames(String dbName, List<String> tableList) throws MetaException {
       if (blockResults) {
         return new ArrayList<String>();
       }
@@ -85,7 +86,7 @@ public class TestFilterHooks {
     }
 
     @Override
-    public List<Table> filterTables(List<Table> tableList) {
+    public List<Table> filterTables(List<Table> tableList) throws MetaException {
       if (blockResults) {
         return new ArrayList<Table>();
       }
@@ -93,7 +94,7 @@ public class TestFilterHooks {
     }
 
     @Override
-    public List<Partition> filterPartitions(List<Partition> partitionList) {
+    public List<Partition> filterPartitions(List<Partition> partitionList) throws MetaException {
       if (blockResults) {
         return new ArrayList<Partition>();
       }
@@ -102,7 +103,7 @@ public class TestFilterHooks {
 
     @Override
     public List<PartitionSpec> filterPartitionSpecs(
-        List<PartitionSpec> partitionSpecList) {
+        List<PartitionSpec> partitionSpecList) throws MetaException {
       if (blockResults) {
         return new ArrayList<PartitionSpec>();
       }
@@ -119,7 +120,7 @@ public class TestFilterHooks {
 
     @Override
     public List<String> filterPartitionNames(String dbName, String tblName,
-        List<String> partitionNames) {
+        List<String> partitionNames) throws MetaException {
       if (blockResults) {
         return new ArrayList<String>();
       }
@@ -136,7 +137,7 @@ public class TestFilterHooks {
 
     @Override
     public List<String> filterIndexNames(String dbName, String tblName,
-        List<String> indexList) {
+        List<String> indexList) throws MetaException {
       if (blockResults) {
         return new ArrayList<String>();
       }
@@ -144,7 +145,7 @@ public class TestFilterHooks {
     }
 
     @Override
-    public List<Index> filterIndexes(List<Index> indexeList) {
+    public List<Index> filterIndexes(List<Index> indexeList) throws MetaException {
       if (blockResults) {
         return new ArrayList<Index>();
       }
@@ -157,23 +158,25 @@ public class TestFilterHooks {
   private static final String TAB1 = "tab1";
   private static final String TAB2 = "tab2";
   private static final String INDEX1 = "idx1";
-  private HiveConf hiveConf;
-  private HiveMetaStoreClient msc;
-  private Driver driver;
+  private static HiveConf hiveConf;
+  private static HiveMetaStoreClient msc;
+  private static Driver driver;
 
-  @Before
-  public void setUp() throws Exception {
+  @BeforeClass
+  public static void setUp() throws Exception {
     DummyMetaStoreFilterHookImpl.blockResults = false;
-    int port = MetaStoreUtils.findFreePort();
-    MetaStoreUtils.startMetaStore(port, ShimLoader.getHadoopThriftAuthBridge());
 
-    hiveConf = new HiveConf(this.getClass());
-    hiveConf.setVar(HiveConf.ConfVars.METASTOREURIS, "thrift://localhost:" + port);
+    hiveConf = new HiveConf(TestFilterHooks.class);
     hiveConf.setIntVar(HiveConf.ConfVars.METASTORETHRIFTCONNECTIONRETRIES, 3);
     hiveConf.set(HiveConf.ConfVars.PREEXECHOOKS.varname, "");
     hiveConf.set(HiveConf.ConfVars.POSTEXECHOOKS.varname, "");
     hiveConf.set(HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY.varname, "false");
     hiveConf.setVar(ConfVars.METASTORE_FILTER_HOOK, DummyMetaStoreFilterHookImpl.class.getName());
+    UtilsForTest.setNewDerbyDbLocation(hiveConf, TestFilterHooks.class.getSimpleName());
+    int port = MetaStoreUtils.findFreePort();
+    hiveConf.setVar(HiveConf.ConfVars.METASTOREURIS, "thrift://localhost:" + port);
+    MetaStoreUtils.startMetaStore(port, ShimLoader.getHadoopThriftAuthBridge(), hiveConf);
+
     SessionState.start(new CliSessionState(hiveConf));
     msc = new HiveMetaStoreClient(hiveConf, null);
     driver = new Driver(hiveConf);
@@ -190,8 +193,8 @@ public class TestFilterHooks {
     driver.run("CREATE INDEX " + INDEX1 + " on table " + TAB1 + "(id) AS 'COMPACT' WITH DEFERRED REBUILD");
   }
 
-  @After
-  public void tearDown() throws Exception {
+  @AfterClass
+  public static void tearDown() throws Exception {
     DummyMetaStoreFilterHookImpl.blockResults = false;
     driver.run("drop database if exists " + DBNAME1  + " cascade");
     driver.run("drop database if exists " + DBNAME2  + " cascade");

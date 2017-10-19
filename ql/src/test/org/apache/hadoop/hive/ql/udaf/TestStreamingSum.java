@@ -50,20 +50,28 @@ import org.junit.Test;
 public class TestStreamingSum {
 
   public static WindowFrameDef wdwFrame(int p, int f) {
+    WindowFrameDef wFrmDef = new WindowFrameDef();
     BoundaryDef start, end;
     if (p == 0) {
       start = new CurrentRowDef();
     } else {
-      start = new RangeBoundaryDef(Direction.PRECEDING, p);
+      RangeBoundaryDef startR = new RangeBoundaryDef();
+      startR.setDirection(Direction.PRECEDING);
+      startR.setAmt(p);
+      start = startR;
     }
 
     if (f == 0) {
       end = new CurrentRowDef();
     } else {
-      end = new RangeBoundaryDef(Direction.FOLLOWING, f);
+      RangeBoundaryDef endR = new RangeBoundaryDef();
+      endR.setDirection(Direction.FOLLOWING);
+      endR.setAmt(f);
+      end = endR;
     }
-
-    return new WindowFrameDef(start, end);
+    wFrmDef.setStart(start);
+    wFrmDef.setEnd(end);
+    return wFrmDef;
   }
 
   public void sumDouble(Iterator<Double> inVals, int inSz, int numPreceding,

@@ -20,22 +20,27 @@ package org.apache.hive.hcatalog.api;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hive.common.ObjectPair;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.common.classification.InterfaceStability;
 import org.apache.hadoop.hive.conf.HiveConf;
-import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.metastore.TableType;
 import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
 import org.apache.hadoop.hive.metastore.api.CurrentNotificationEventId;
 import org.apache.hadoop.hive.metastore.api.Database;
+import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
 import org.apache.hadoop.hive.metastore.api.InvalidOperationException;
 import org.apache.hadoop.hive.metastore.api.MetaException;
@@ -48,12 +53,29 @@ import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.api.UnknownDBException;
 import org.apache.hadoop.hive.metastore.api.UnknownTableException;
+import org.apache.hadoop.hive.ql.exec.FunctionRegistry;
+import org.apache.hadoop.hive.ql.exec.Utilities;
+import org.apache.hadoop.hive.ql.parse.SemanticException;
+import org.apache.hadoop.hive.ql.plan.ExprNodeColumnDesc;
+import org.apache.hadoop.hive.ql.plan.ExprNodeConstantDesc;
+import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
+import org.apache.hadoop.hive.ql.plan.ExprNodeGenericFuncDesc;
+import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorConverters;
+import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
+import org.apache.hive.hcatalog.api.repl.HCatReplicationTaskIterator;
+import org.apache.hive.hcatalog.api.repl.ReplicationTask;
 import org.apache.hive.hcatalog.common.HCatConstants;
 import org.apache.hive.hcatalog.common.HCatException;
 import org.apache.hive.hcatalog.common.HCatUtil;
 import org.apache.hive.hcatalog.data.schema.HCatFieldSchema;
 import org.apache.hive.hcatalog.data.schema.HCatSchemaUtils;
 import org.apache.thrift.TException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
 
 /**
  * The HCatClientHMSImpl is the Hive Metastore client based implementation of
@@ -61,7 +83,8 @@ import org.apache.thrift.TException;
  */
 public class HCatClientHMSImpl extends HCatClient {
 
-  private HiveMetaStoreClient hmsClient;
+  private static final Logger LOG = LoggerFactory.getLogger(HCatClientHMSImpl.class);
+  private IMetaStoreClient hmsClient;
   private Configuration config;
   private HiveConf hiveConfig;
 
@@ -72,7 +95,9 @@ public class HCatClientHMSImpl extends HCatClient {
     try {
       dbNames = hmsClient.getDatabases(pattern);
     } catch (MetaException exp) {
-      throw new HCatException("MetaException while listing db names", exp);
+      throw new HCatException("MetaException while listing db names. " + exp.getMessage(), exp);
+    } catch (TException e) {
+      throw new HCatException("Transport Exception while listing db names. " + e.getMessage(), e);
     }
     return dbNames;
   }
@@ -148,8 +173,12 @@ public class HCatClientHMSImpl extends HCatClient {
     try {
       tableNames = hmsClient.getTables(checkDB(dbName), tablePattern);
     } catch (MetaException e) {
-      throw new HCatException(
-        "MetaException while fetching table names.", e);
+      throw new HCatException("MetaException while fetching table names. " + e.getMessage(), e);
+    } catch (UnknownDBException e) {
+      throw new HCatException("UnknownDB " + dbName + " while fetching table names.", e);
+    } catch (TException e) {
+      throw new HCatException("Transport exception while fetching table names. "
+          + e.getMessage(), e);
     }
     return tableNames;
   }
@@ -480,19 +509,124 @@ public class HCatClientHMSImpl extends HCatClient {
     }
   }
 
-  @Override
-  public void dropPartitions(String dbName, String tableName,
-                 Map<String, String> partitionSpec, boolean ifExists)
-    throws HCatException {
-    try {
-      dbName = checkDB(dbName);
-      List<Partition> partitions = hmsClient.listPartitionsByFilter(dbName, tableName,
-          getFilterString(partitionSpec), (short)-1);
+  /**
+   * Helper class to help build ExprDesc tree to represent the partitions to be dropped.
+   * Note: At present, the ExpressionBuilder only constructs partition predicates where
+   * partition-keys equal specific values, and logical-AND expressions. E.g.
+   *  ( dt = '20150310' AND region = 'US' )
+   * This only supports the partition-specs specified by the Map argument of:
+   * {@link org.apache.hive.hcatalog.api.HCatClient#dropPartitions(String, String, Map, boolean)}
+   */
+  private static class ExpressionBuilder {
 
-      for (Partition partition : partitions) {
-        dropPartition(partition, ifExists);
+    private Map<String, PrimitiveTypeInfo> partColumnTypesMap = Maps.newHashMap();
+    private Map<String, String> partSpecs;
+
+    public ExpressionBuilder(Table table, Map<String, String> partSpecs) {
+      this.partSpecs = partSpecs;
+      for (FieldSchema partField : table.getPartitionKeys()) {
+        partColumnTypesMap.put(partField.getName().toLowerCase(),
+            TypeInfoFactory.getPrimitiveTypeInfo(partField.getType()));
+      }
+    }
+
+    private PrimitiveTypeInfo getTypeFor(String partColumn) {
+      return partColumnTypesMap.get(partColumn.toLowerCase());
+    }
+
+    private Object getTypeAppropriateValueFor(PrimitiveTypeInfo type, String value) {
+      ObjectInspectorConverters.Converter converter = ObjectInspectorConverters.getConverter(
+          TypeInfoUtils.getStandardJavaObjectInspectorFromTypeInfo(TypeInfoFactory.stringTypeInfo),
+          TypeInfoUtils.getStandardJavaObjectInspectorFromTypeInfo(type));
+
+      return converter.convert(value);
+    }
+
+    public ExprNodeGenericFuncDesc equalityPredicate(String partColumn, String value) throws SemanticException {
+
+      PrimitiveTypeInfo partColumnType = getTypeFor(partColumn);
+      ExprNodeColumnDesc partColumnExpr = new ExprNodeColumnDesc(partColumnType, partColumn, null, true);
+      ExprNodeConstantDesc valueExpr = new ExprNodeConstantDesc(partColumnType,
+          getTypeAppropriateValueFor(partColumnType, value));
+
+      return binaryPredicate("=", partColumnExpr, valueExpr);
+    }
+
+    public ExprNodeGenericFuncDesc binaryPredicate(String function, ExprNodeDesc lhs, ExprNodeDesc rhs) throws SemanticException {
+      return new ExprNodeGenericFuncDesc(TypeInfoFactory.booleanTypeInfo,
+          FunctionRegistry.getFunctionInfo(function).getGenericUDF(),
+          Lists.newArrayList(lhs, rhs));
+    }
+
+    public ExprNodeGenericFuncDesc build() throws SemanticException {
+      ExprNodeGenericFuncDesc resultExpr = null;
+
+      for (Map.Entry<String,String> partSpec : partSpecs.entrySet()) {
+        String column = partSpec.getKey();
+        String value  = partSpec.getValue();
+        ExprNodeGenericFuncDesc partExpr = equalityPredicate(column, value);
+
+        resultExpr = (resultExpr == null? partExpr : binaryPredicate("and", resultExpr, partExpr));
       }
 
+      return resultExpr;
+    }
+  } // class ExpressionBuilder;
+
+  private static boolean isExternal(Table table) {
+    return table.getParameters() != null
+        && "TRUE".equalsIgnoreCase(table.getParameters().get("EXTERNAL"));
+  }
+
+  private void dropPartitionsUsingExpressions(Table table, Map<String, String> partitionSpec,
+                                              boolean ifExists, boolean deleteData)
+      throws SemanticException, TException {
+    LOG.info("HCatClient: Dropping partitions using partition-predicate Expressions.");
+    ExprNodeGenericFuncDesc partitionExpression = new ExpressionBuilder(table, partitionSpec).build();
+    ObjectPair<Integer, byte[]> serializedPartitionExpression =
+        new ObjectPair<Integer, byte[]>(partitionSpec.size(),
+            Utilities.serializeExpressionToKryo(partitionExpression));
+    hmsClient.dropPartitions(table.getDbName(), table.getTableName(), Arrays.asList(serializedPartitionExpression),
+        deleteData && !isExternal(table),  // Delete data?
+        false,                             // Ignore Protection?
+        ifExists,                          // Fail if table doesn't exist?
+        false);                            // Need results back?
+  }
+
+  private void dropPartitionsIteratively(String dbName, String tableName,
+                                         Map<String, String> partitionSpec, boolean ifExists, boolean deleteData)
+      throws HCatException, TException {
+    LOG.info("HCatClient: Dropping partitions iteratively.");
+    List<Partition> partitions = hmsClient.listPartitionsByFilter(dbName, tableName,
+        getFilterString(partitionSpec), (short) -1);
+    for (Partition partition : partitions) {
+      dropPartition(partition, ifExists, deleteData);
+    }
+  }
+
+  @Override
+  public void dropPartitions(String dbName, String tableName,
+                 Map<String, String> partitionSpec, boolean ifExists, boolean deleteData)
+    throws HCatException {
+    LOG.info("HCatClient dropPartitions(db=" + dbName + ",table=" + tableName + ", partitionSpec: ["+ partitionSpec + "]).");
+    try {
+      dbName = checkDB(dbName);
+      Table table = hmsClient.getTable(dbName, tableName);
+
+      if (hiveConfig.getBoolVar(HiveConf.ConfVars.METASTORE_CLIENT_DROP_PARTITIONS_WITH_EXPRESSIONS)) {
+        try {
+          dropPartitionsUsingExpressions(table, partitionSpec, ifExists, deleteData);
+        }
+        catch (SemanticException parseFailure) {
+          LOG.warn("Could not push down partition-specification to back-end, for dropPartitions(). Resorting to iteration.",
+              parseFailure);
+          dropPartitionsIteratively(dbName, tableName, partitionSpec, ifExists, deleteData);
+        }
+      }
+      else {
+        // Not using expressions.
+        dropPartitionsIteratively(dbName, tableName, partitionSpec, ifExists, deleteData);
+      }
     } catch (NoSuchObjectException e) {
       throw new ObjectNotFoundException(
           "NoSuchObjectException while dropping partition. " +
@@ -506,10 +640,16 @@ public class HCatClientHMSImpl extends HCatClient {
     }
   }
 
-  private void dropPartition(Partition partition, boolean ifExists)
+  @Override
+  public void dropPartitions(String dbName, String tableName,
+                             Map<String, String> partitionSpec, boolean ifExists) throws HCatException {
+    dropPartitions(dbName, tableName, partitionSpec, ifExists, true);
+  }
+
+  private void dropPartition(Partition partition, boolean ifExists, boolean deleteData)
     throws HCatException, MetaException, TException {
     try {
-      hmsClient.dropPartition(partition.getDbName(), partition.getTableName(), partition.getValues());
+      hmsClient.dropPartition(partition.getDbName(), partition.getTableName(), partition.getValues(), deleteData);
     } catch (NoSuchObjectException e) {
       if (!ifExists) {
         throw new ObjectNotFoundException(
@@ -680,7 +820,7 @@ public class HCatClientHMSImpl extends HCatClient {
     this.config = conf;
     try {
       hiveConfig = HCatUtil.getHiveConf(config);
-      hmsClient = HCatUtil.getHiveClient(hiveConfig);
+      hmsClient = HCatUtil.getHiveMetastoreClient(hiveConfig);
     } catch (MetaException exp) {
       throw new HCatException("MetaException while creating HMS client",
         exp);
@@ -689,6 +829,11 @@ public class HCatClientHMSImpl extends HCatClient {
         exp);
     }
 
+  }
+
+  @Override
+  public String getConfVal(String key, String defaultVal) {
+    return hiveConfig.get(key,defaultVal);
   }
 
   private Table getHiveTableLike(String dbName, String existingTblName,
@@ -844,18 +989,27 @@ public class HCatClientHMSImpl extends HCatClient {
   }
 
   @Override
+  public Iterator<ReplicationTask> getReplicationTasks(
+      long lastEventId, int maxEvents, String dbName, String tableName) throws HCatException {
+    return new HCatReplicationTaskIterator(this,lastEventId,maxEvents,dbName,tableName);
+  }
+
+  @Override
   public List<HCatNotificationEvent> getNextNotification(long lastEventId, int maxEvents,
                                                          IMetaStoreClient.NotificationFilter filter)
       throws HCatException {
     try {
-      List<HCatNotificationEvent> events = new ArrayList<HCatNotificationEvent>();
       NotificationEventResponse rsp = hmsClient.getNextNotification(lastEventId, maxEvents, filter);
       if (rsp != null && rsp.getEvents() != null) {
-        for (NotificationEvent event : rsp.getEvents()) {
-          events.add(new HCatNotificationEvent(event));
-        }
+        return Lists.transform(rsp.getEvents(), new Function<NotificationEvent, HCatNotificationEvent>() {
+          @Override
+          public HCatNotificationEvent apply(@Nullable NotificationEvent notificationEvent) {
+            return new HCatNotificationEvent(notificationEvent);
+          }
+        });
+      } else {
+        return new ArrayList<HCatNotificationEvent>();
       }
-      return events;
     } catch (TException e) {
       throw new ConnectionFailureException("TException while getting notifications", e);
     }

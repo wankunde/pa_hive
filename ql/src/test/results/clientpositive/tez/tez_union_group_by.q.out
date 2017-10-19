@@ -4,7 +4,7 @@ u bigint,
 t string,
 st string
 )
-PARTITIONED BY (date string)
+PARTITIONED BY (`date` string)
 STORED AS ORC 
 TBLPROPERTIES ("orc.compress"="ZLIB")
 PREHOOK: type: CREATETABLE
@@ -16,7 +16,7 @@ u bigint,
 t string,
 st string
 )
-PARTITIONED BY (date string)
+PARTITIONED BY (`date` string)
 STORED AS ORC 
 TBLPROPERTIES ("orc.compress"="ZLIB")
 POSTHOOK: type: CREATETABLE
@@ -26,7 +26,7 @@ PREHOOK: query: CREATE TABLE y
 (
 u bigint
 )
-PARTITIONED BY (date string)
+PARTITIONED BY (`date` string)
 STORED AS ORC 
 TBLPROPERTIES ("orc.compress"="ZLIB")
 PREHOOK: type: CREATETABLE
@@ -36,7 +36,7 @@ POSTHOOK: query: CREATE TABLE y
 (
 u bigint
 )
-PARTITIONED BY (date string)
+PARTITIONED BY (`date` string)
 STORED AS ORC 
 TBLPROPERTIES ("orc.compress"="ZLIB")
 POSTHOOK: type: CREATETABLE
@@ -46,7 +46,7 @@ PREHOOK: query: CREATE TABLE z
 (
 u bigint
 )
-PARTITIONED BY (date string)
+PARTITIONED BY (`date` string)
 STORED AS ORC 
 TBLPROPERTIES ("orc.compress"="ZLIB")
 PREHOOK: type: CREATETABLE
@@ -56,7 +56,7 @@ POSTHOOK: query: CREATE TABLE z
 (
 u bigint
 )
-PARTITIONED BY (date string)
+PARTITIONED BY (`date` string)
 STORED AS ORC 
 TBLPROPERTIES ("orc.compress"="ZLIB")
 POSTHOOK: type: CREATETABLE
@@ -88,14 +88,14 @@ PREHOOK: query: EXPLAIN
 SELECT o.u, n.u
 FROM 
 (
-SELECT m.u, Min(date) as ft
+SELECT m.u, Min(`date`) as ft
 FROM 
 (
-SELECT u, date FROM x WHERE date < '2014-09-02' 
+SELECT u, `date` FROM x WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM y WHERE date < '2014-09-02' 
+SELECT u, `date` FROM y WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM z WHERE date < '2014-09-02' 
+SELECT u, `date` FROM z WHERE `date` < '2014-09-02' 
 ) m
 GROUP BY m.u
 ) n 
@@ -105,7 +105,7 @@ SELECT x.u
 FROM x
 JOIN v 
 ON (x.t = v.t AND x.st <=> v.st)
-WHERE x.date >= '2014-03-04' AND x.date < '2014-09-03'
+WHERE x.`date` >= '2014-03-04' AND x.`date` < '2014-09-03'
 GROUP BY x.u
 ) o
 ON n.u = o.u 
@@ -115,14 +115,14 @@ POSTHOOK: query: EXPLAIN
 SELECT o.u, n.u
 FROM 
 (
-SELECT m.u, Min(date) as ft
+SELECT m.u, Min(`date`) as ft
 FROM 
 (
-SELECT u, date FROM x WHERE date < '2014-09-02' 
+SELECT u, `date` FROM x WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM y WHERE date < '2014-09-02' 
+SELECT u, `date` FROM y WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM z WHERE date < '2014-09-02' 
+SELECT u, `date` FROM z WHERE `date` < '2014-09-02' 
 ) m
 GROUP BY m.u
 ) n 
@@ -132,7 +132,7 @@ SELECT x.u
 FROM x
 JOIN v 
 ON (x.t = v.t AND x.st <=> v.st)
-WHERE x.date >= '2014-03-04' AND x.date < '2014-09-03'
+WHERE x.`date` >= '2014-03-04' AND x.`date` < '2014-09-03'
 GROUP BY x.u
 ) o
 ON n.u = o.u 
@@ -156,22 +156,104 @@ STAGE PLANS:
 #### A masked pattern was here ####
       Vertices:
         Map 1 
+            Map Operator Tree:
+                TableScan
+                  alias: x
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                  Filter Operator
+                    predicate: ((date < '2014-09-02') and (u <> 0)) (type: boolean)
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                    Select Operator
+                      expressions: u (type: bigint), date (type: string)
+                      outputColumnNames: _col0, _col1
+                      Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                      Group By Operator
+                        aggregations: min(_col1)
+                        keys: _col0 (type: bigint)
+                        mode: hash
+                        outputColumnNames: _col0, _col1
+                        Statistics: Num rows: 3 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                        Reduce Output Operator
+                          key expressions: _col0 (type: bigint)
+                          sort order: +
+                          Map-reduce partition columns: _col0 (type: bigint)
+                          Statistics: Num rows: 3 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                          value expressions: _col1 (type: string)
         Map 10 
             Map Operator Tree:
                 TableScan
                   alias: v
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                   Filter Operator
                     predicate: t is not null (type: boolean)
-                    Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                     Reduce Output Operator
                       key expressions: t (type: string), st (type: string)
                       sort order: ++
                       Map-reduce partition columns: t (type: string), st (type: string)
-                      Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                      Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
         Map 5 
+            Map Operator Tree:
+                TableScan
+                  alias: y
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                  Filter Operator
+                    predicate: ((date < '2014-09-02') and (u <> 0)) (type: boolean)
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                    Select Operator
+                      expressions: u (type: bigint), date (type: string)
+                      outputColumnNames: _col0, _col1
+                      Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                      Group By Operator
+                        aggregations: min(_col1)
+                        keys: _col0 (type: bigint)
+                        mode: hash
+                        outputColumnNames: _col0, _col1
+                        Statistics: Num rows: 3 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                        Reduce Output Operator
+                          key expressions: _col0 (type: bigint)
+                          sort order: +
+                          Map-reduce partition columns: _col0 (type: bigint)
+                          Statistics: Num rows: 3 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                          value expressions: _col1 (type: string)
         Map 6 
+            Map Operator Tree:
+                TableScan
+                  alias: z
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                  Filter Operator
+                    predicate: ((date < '2014-09-02') and (u <> 0)) (type: boolean)
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                    Select Operator
+                      expressions: u (type: bigint), date (type: string)
+                      outputColumnNames: _col0, _col1
+                      Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                      Group By Operator
+                        aggregations: min(_col1)
+                        keys: _col0 (type: bigint)
+                        mode: hash
+                        outputColumnNames: _col0, _col1
+                        Statistics: Num rows: 3 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                        Reduce Output Operator
+                          key expressions: _col0 (type: bigint)
+                          sort order: +
+                          Map-reduce partition columns: _col0 (type: bigint)
+                          Statistics: Num rows: 3 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                          value expressions: _col1 (type: string)
         Map 7 
+            Map Operator Tree:
+                TableScan
+                  alias: x
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                  Filter Operator
+                    predicate: (((t is not null and (date >= '2014-03-04')) and (date < '2014-09-03')) and (u <> 0)) (type: boolean)
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                    Reduce Output Operator
+                      key expressions: t (type: string), st (type: string)
+                      sort order: ++
+                      Map-reduce partition columns: t (type: string), st (type: string)
+                      Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
+                      value expressions: u (type: bigint)
         Reducer 3 
             Reduce Operator Tree:
               Group By Operator
@@ -179,19 +261,19 @@ STAGE PLANS:
                 keys: KEY._col0 (type: bigint)
                 mode: mergepartial
                 outputColumnNames: _col0, _col1
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                 Filter Operator
                   predicate: (_col1 <= '2014-09-02') (type: boolean)
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                   Select Operator
                     expressions: _col0 (type: bigint)
                     outputColumnNames: _col0
-                    Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                     Reduce Output Operator
                       key expressions: _col0 (type: bigint)
                       sort order: +
                       Map-reduce partition columns: _col0 (type: bigint)
-                      Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                      Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
         Reducer 4 
             Reduce Operator Tree:
               Merge Join Operator
@@ -201,14 +283,14 @@ STAGE PLANS:
                   0 _col0 (type: bigint)
                   1 _col0 (type: bigint)
                 outputColumnNames: _col0, _col2
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                 Select Operator
                   expressions: _col2 (type: bigint), _col0 (type: bigint)
                   outputColumnNames: _col0, _col1
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                   File Output Operator
                     compressed: false
-                    Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                     table:
                         input format: org.apache.hadoop.mapred.TextInputFormat
                         output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -223,29 +305,29 @@ STAGE PLANS:
                   1 t (type: string), st (type: string)
                 nullSafes: [false, true]
                 outputColumnNames: _col0
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                 Group By Operator
                   keys: _col0 (type: bigint)
                   mode: hash
                   outputColumnNames: _col0
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                   Reduce Output Operator
                     key expressions: _col0 (type: bigint)
                     sort order: +
                     Map-reduce partition columns: _col0 (type: bigint)
-                    Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                    Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
         Reducer 9 
             Reduce Operator Tree:
               Group By Operator
                 keys: KEY._col0 (type: bigint)
                 mode: mergepartial
                 outputColumnNames: _col0
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                 Reduce Output Operator
                   key expressions: _col0 (type: bigint)
                   sort order: +
                   Map-reduce partition columns: _col0 (type: bigint)
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
         Union 2 
             Vertex: Union 2
 
@@ -258,14 +340,14 @@ STAGE PLANS:
 PREHOOK: query: SELECT o.u, n.u
 FROM 
 (
-SELECT m.u, Min(date) as ft
+SELECT m.u, Min(`date`) as ft
 FROM 
 (
-SELECT u, date FROM x WHERE date < '2014-09-02' 
+SELECT u, `date` FROM x WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM y WHERE date < '2014-09-02' 
+SELECT u, `date` FROM y WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM z WHERE date < '2014-09-02' 
+SELECT u, `date` FROM z WHERE `date` < '2014-09-02' 
 ) m
 GROUP BY m.u
 ) n 
@@ -275,7 +357,7 @@ SELECT x.u
 FROM x
 JOIN v 
 ON (x.t = v.t AND x.st <=> v.st)
-WHERE x.date >= '2014-03-04' AND x.date < '2014-09-03'
+WHERE x.`date` >= '2014-03-04' AND x.`date` < '2014-09-03'
 GROUP BY x.u
 ) o
 ON n.u = o.u 
@@ -289,14 +371,14 @@ PREHOOK: Input: default@z
 POSTHOOK: query: SELECT o.u, n.u
 FROM 
 (
-SELECT m.u, Min(date) as ft
+SELECT m.u, Min(`date`) as ft
 FROM 
 (
-SELECT u, date FROM x WHERE date < '2014-09-02' 
+SELECT u, `date` FROM x WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM y WHERE date < '2014-09-02' 
+SELECT u, `date` FROM y WHERE `date` < '2014-09-02' 
 UNION ALL
-SELECT u, date FROM z WHERE date < '2014-09-02' 
+SELECT u, `date` FROM z WHERE `date` < '2014-09-02' 
 ) m
 GROUP BY m.u
 ) n 
@@ -306,7 +388,7 @@ SELECT x.u
 FROM x
 JOIN v 
 ON (x.t = v.t AND x.st <=> v.st)
-WHERE x.date >= '2014-03-04' AND x.date < '2014-09-03'
+WHERE x.`date` >= '2014-03-04' AND x.`date` < '2014-09-03'
 GROUP BY x.u
 ) o
 ON n.u = o.u 

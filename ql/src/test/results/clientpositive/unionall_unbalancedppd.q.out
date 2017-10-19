@@ -1,10 +1,6 @@
-PREHOOK: query: -- SORT_QUERY_RESULTS
-
-drop table if exists union_all_bug_test_1
+PREHOOK: query: drop table if exists union_all_bug_test_1
 PREHOOK: type: DROPTABLE
-POSTHOOK: query: -- SORT_QUERY_RESULTS
-
-drop table if exists union_all_bug_test_1
+POSTHOOK: query: drop table if exists union_all_bug_test_1
 POSTHOOK: type: DROPTABLE
 PREHOOK: query: drop table if exists union_all_bug_test_2
 PREHOOK: type: DROPTABLE
@@ -84,38 +80,38 @@ STAGE PLANS:
       Map Operator Tree:
           TableScan
             alias: union_all_bug_test_1
-            Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+            Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
             Filter Operator
               predicate: (if(true, f1, f2) = 1) (type: boolean)
-              Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+              Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
               Select Operator
                 expressions: f1 (type: int)
                 outputColumnNames: _col0
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                 Union
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 2 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                   File Output Operator
                     compressed: false
-                    Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                    Statistics: Num rows: 2 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                     table:
                         input format: org.apache.hadoop.mapred.TextInputFormat
                         output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
                         serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
           TableScan
             alias: union_all_bug_test_2
-            Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+            Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
             Filter Operator
               predicate: false (type: boolean)
-              Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+              Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
               Select Operator
                 expressions: f1 (type: int)
                 outputColumnNames: _col0
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                 Union
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 2 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                   File Output Operator
                     compressed: false
-                    Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                    Statistics: Num rows: 2 Data size: 0 Basic stats: PARTIAL Column stats: NONE
                     table:
                         input format: org.apache.hadoop.mapred.TextInputFormat
                         output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -287,8 +283,8 @@ POSTHOOK: Input: default@union_all_bug_test_1
 POSTHOOK: Input: default@union_all_bug_test_2
 #### A masked pattern was here ####
 0
-0
 1
+0
 PREHOOK: query: SELECT f1
 FROM (
 
@@ -329,10 +325,10 @@ POSTHOOK: type: QUERY
 POSTHOOK: Input: default@union_all_bug_test_1
 POSTHOOK: Input: default@union_all_bug_test_2
 #### A masked pattern was here ####
-0
+1
 0
 1
-1
+0
 PREHOOK: query: SELECT f1
 FROM (
 

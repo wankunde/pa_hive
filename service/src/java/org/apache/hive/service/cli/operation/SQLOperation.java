@@ -30,6 +30,7 @@ import java.util.Properties;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 
+import org.apache.commons.codec.binary.Base64;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Schema;
@@ -38,6 +39,7 @@ import org.apache.hadoop.hive.ql.Driver;
 import org.apache.hadoop.hive.ql.exec.ExplainTask;
 import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.metadata.Hive;
+import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.parse.VariableSubstitution;
 import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
 import org.apache.hadoop.hive.ql.session.OperationLog;
@@ -91,6 +93,14 @@ public class SQLOperation extends ExecuteStatementOperation {
 
     try {
       driver = new Driver(sqlOperationConf, getParentSession().getUserName());
+
+      // set the operation handle information in Driver, so that thrift API users
+      // can use the operation handle they receive, to lookup query information in
+      // Yarn ATS
+      String guid64 = Base64.encodeBase64URLSafeString(getHandle().getHandleIdentifier()
+          .toTHandleIdentifier().getGuid()).trim();
+      driver.setOperationId(guid64);
+
       // In Hive server mode, we are not able to retry in the FetchTask
       // case, when calling fetch queries since execute() has returned.
       // For now, we disable the test attempts.
@@ -176,7 +186,7 @@ public class SQLOperation extends ExecuteStatementOperation {
       final SessionState parentSessionState = SessionState.get();
       // ThreadLocal Hive object needs to be set in background thread.
       // The metastore client in Hive is associated with right user.
-      final Hive parentHive = parentSession.getSessionHive();
+      final Hive parentHive = getSessionHive();
       // Current UGI will get used by metastore when metsatore is in embedded mode
       // So this needs to get passed to the new background thread
       final UserGroupInformation currentUGI = getCurrentUGI(opConfig);
@@ -248,6 +258,19 @@ public class SQLOperation extends ExecuteStatementOperation {
       return Utils.getUGI();
     } catch (Exception e) {
       throw new HiveSQLException("Unable to get current user", e);
+    }
+  }
+
+  /**
+   * Returns the ThreadLocal Hive for the current thread
+   * @return Hive
+   * @throws HiveSQLException
+   */
+  private Hive getSessionHive() throws HiveSQLException {
+    try {
+      return Hive.get();
+    } catch (HiveException e) {
+      throw new HiveSQLException("Failed to get ThreadLocal Hive object", e);
     }
   }
 

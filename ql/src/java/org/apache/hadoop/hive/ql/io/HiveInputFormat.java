@@ -23,7 +23,6 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -45,10 +44,10 @@ import org.apache.hadoop.hive.ql.exec.Utilities;
 import org.apache.hadoop.hive.ql.log.PerfLogger;
 import org.apache.hadoop.hive.ql.plan.ExprNodeGenericFuncDesc;
 import org.apache.hadoop.hive.ql.plan.MapWork;
+import org.apache.hadoop.hive.ql.plan.MergeJoinWork;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.hive.ql.plan.PartitionDesc;
 import org.apache.hadoop.hive.ql.plan.TableScanDesc;
-import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.io.Writable;
@@ -61,7 +60,7 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.JobConfigurable;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
-import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hive.common.util.ReflectionUtil;
 
 /**
  * HiveInputFormat is a parameterized InputFormat which looks at the path name
@@ -156,11 +155,12 @@ public class HiveInputFormat<K extends WritableComparable, V extends Writable>
       return inputSplit.getLocations();
     }
 
+ // TODO#: THIS
     @Override
     public void readFields(DataInput in) throws IOException {
       String inputSplitClassName = in.readUTF();
       try {
-        inputSplit = (InputSplit) ReflectionUtils.newInstance(conf
+        inputSplit = (InputSplit) ReflectionUtil.newInstance(conf
             .getClassByName(inputSplitClassName), conf);
       } catch (Exception e) {
         throw new IOException(
@@ -200,7 +200,7 @@ public class HiveInputFormat<K extends WritableComparable, V extends Writable>
     InputFormat<WritableComparable, Writable> instance = inputFormats.get(inputFormatClass);
     if (instance == null) {
       try {
-        instance = (InputFormat<WritableComparable, Writable>) ReflectionUtils
+        instance = (InputFormat<WritableComparable, Writable>) ReflectionUtil
             .newInstance(inputFormatClass, job);
         // HBase input formats are not thread safe today. See HIVE-8808.
         String inputFormatName = inputFormatClass.getName().toLowerCase();
@@ -328,7 +328,7 @@ public class HiveInputFormat<K extends WritableComparable, V extends Writable>
   }
 
   public InputSplit[] getSplits(JobConf job, int numSplits) throws IOException {
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.GET_SPLITS);
     init(job);
     Path[] dirs = getInputPaths(job);

@@ -34,6 +34,7 @@ base64
 between
 bin
 case
+cbrt
 ceil
 ceiling
 coalesce
@@ -56,6 +57,7 @@ current_date
 current_timestamp
 current_user
 date_add
+date_format
 date_sub
 datediff
 day
@@ -74,6 +76,7 @@ ewah_bitmap_empty
 ewah_bitmap_or
 exp
 explode
+factorial
 field
 find_in_set
 first_value
@@ -105,6 +108,7 @@ lcase
 lead
 least
 length
+levenshtein
 like
 ln
 locate
@@ -122,6 +126,7 @@ max
 min
 minute
 month
+months_between
 named_struct
 negative
 next_day
@@ -163,10 +168,14 @@ rpad
 rtrim
 second
 sentences
+shiftleft
+shiftright
+shiftrightunsigned
 sign
 sin
 size
 sort_array
+soundex
 space
 split
 sqrt
@@ -186,6 +195,7 @@ to_unix_timestamp
 to_utc_timestamp
 translate
 trim
+trunc
 ucase
 unbase64
 unhex
@@ -214,6 +224,7 @@ PREHOOK: type: SHOWFUNCTIONS
 POSTHOOK: query: SHOW FUNCTIONS '^c.*'
 POSTHOOK: type: SHOWFUNCTIONS
 case
+cbrt
 ceil
 ceiling
 coalesce
@@ -287,6 +298,7 @@ POSTHOOK: query: SHOW FUNCTIONS '.*date.*'
 POSTHOOK: type: SHOWFUNCTIONS
 current_date
 date_add
+date_format
 date_sub
 datediff
 to_date
@@ -317,6 +329,7 @@ max
 min
 minute
 month
+months_between
 xpath
 xpath_boolean
 xpath_double

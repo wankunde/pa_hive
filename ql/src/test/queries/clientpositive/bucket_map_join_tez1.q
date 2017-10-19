@@ -29,6 +29,42 @@ explain
 select a.key, a.value, b.value
 from tab a join tab_part b on a.key = b.key;
 
+explain
+select count(*)
+from 
+(select distinct key, value from tab_part) a join tab b on a.key = b.key;
+
+select count(*)
+from 
+(select distinct key, value from tab_part) a join tab b on a.key = b.key;
+
+explain
+select count(*)
+from
+(select a.key as key, a.value as value from tab a join tab_part b on a.key = b.key) c
+join
+tab_part d on c.key = d.key;
+
+select count(*)
+from
+(select a.key as key, a.value as value from tab a join tab_part b on a.key = b.key) c
+join
+tab_part d on c.key = d.key;
+
+explain
+select count(*)
+from
+tab_part d
+join
+(select a.key as key, a.value as value from tab a join tab_part b on a.key = b.key) c on c.key = d.key;
+
+select count(*)
+from
+tab_part d
+join
+(select a.key as key, a.value as value from tab a join tab_part b on a.key = b.key) c on c.key = d.key;
+
+
 -- one side is really bucketed. srcbucket_mapjoin is not really a bucketed table.
 -- In this case the sub-query is chosen as the big table.
 explain
@@ -82,4 +118,28 @@ from tab1 a join tab_part b on a.key = b.key;
 
 explain select a.key, b.key from tab_part a join tab_part c on a.key = c.key join tab_part b on a.value = b.value;
 
+explain
+select a.key, a.value, b.value
+from tab a join tab_part b on a.key = b.key and a.ds = b.ds;
 
+set hive.mapjoin.hybridgrace.hashtable = false;
+insert overwrite table tab partition (ds='2008-04-08')
+select key,value from srcbucket_mapjoin where key = 411;
+
+explain
+select count(*)
+from tab_part a join tab b on a.key = b.key;
+
+select count(*)
+from tab_part a join tab b on a.key = b.key;
+
+set hive.mapjoin.hybridgrace.hashtable = false;
+insert overwrite table tab partition (ds='2008-04-08')
+select key,value from srcbucket_mapjoin where key = 411;
+
+explain
+select count(*)
+from tab_part a join tab b on a.key = b.key;
+
+select count(*)
+from tab_part a join tab b on a.key = b.key;

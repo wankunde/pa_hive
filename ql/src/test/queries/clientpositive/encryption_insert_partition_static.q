@@ -18,6 +18,11 @@ create table unencryptedTable(key string,
     value string) partitioned by (ds string) clustered by (key) into 2 buckets stored as orc TBLPROPERTIES ('transactional'='true');
 
 -- insert encrypted table from values
+explain extended insert into table encryptedTable partition
+    (ds='today') values
+    ('501', 'val_501'),
+    ('502', 'val_502');
+
 insert into table encryptedTable partition
     (ds='today') values
     ('501', 'val_501'),
@@ -26,17 +31,28 @@ insert into table encryptedTable partition
 select * from encryptedTable order by key;
 
 -- insert encrypted table from unencrypted source
-insert into table encryptedTable partition (ds='yesterday')
-select * from src where key in ('238', '86');
+explain extended from src
+insert into table encryptedTable partition
+    (ds='yesterday')
+    select * limit 2;
+
+from src
+insert into table encryptedTable partition
+    (ds='yesterday')
+    select * limit 2;
 
 select * from encryptedTable order by key;
 
 -- insert unencrypted table from encrypted source
-insert into table unencryptedTable partition (ds='today')
-select key, value from encryptedTable where ds='today';
+explain extended from encryptedTable
+insert into table unencryptedTable partition
+    (ds='today')
+    select key, value;
 
-insert into table unencryptedTable partition (ds='yesterday')
-select key, value from encryptedTable where ds='yesterday';
+from encryptedTable
+insert into table unencryptedTable partition
+    (ds='today')
+    select key, value;
 
 select * from unencryptedTable order by key;
 

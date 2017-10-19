@@ -19,7 +19,6 @@
 package org.apache.hadoop.hive.ql.metadata;
 
 import java.io.Serializable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -34,8 +33,8 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.common.FileUtils;
+import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.metastore.ProtectMode;
@@ -50,6 +49,7 @@ import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
 import org.apache.hadoop.hive.ql.exec.Utilities;
 import org.apache.hadoop.hive.ql.io.HiveFileFormatUtils;
 import org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat;
+import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer.TableSpec;
 import org.apache.hadoop.hive.ql.parse.SemanticAnalyzer;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.ql.session.SessionState;
@@ -89,6 +89,9 @@ public class Table implements Serializable {
   private Path path;
 
   private transient HiveStorageHandler storageHandler;
+
+  private transient TableSpec tableSpec;
+
 
   /**
    * Used only for serialization.
@@ -333,17 +336,27 @@ public class Table implements Serializable {
     return outputFormatClass;
   }
 
+  /**
+   * Marker SemanticException, so that processing that allows for table validation failures
+   * and appropriately handles them can recover from these types of SemanticExceptions
+   */
+  public class ValidationFailureSemanticException extends SemanticException{
+    public ValidationFailureSemanticException(String s) {
+      super(s);
+    }
+  };
+
   final public void validatePartColumnNames(
       Map<String, String> spec, boolean shouldBeFull) throws SemanticException {
     List<FieldSchema> partCols = tTable.getPartitionKeys();
     if (partCols == null || (partCols.size() == 0)) {
       if (spec != null) {
-        throw new SemanticException("table is not partitioned but partition spec exists: " + spec);
+        throw new ValidationFailureSemanticException("table is not partitioned but partition spec exists: " + spec);
       }
       return;
     } else if (spec == null) {
       if (shouldBeFull) {
-        throw new SemanticException("table is partitioned but partition spec is not specified");
+        throw new ValidationFailureSemanticException("table is partitioned but partition spec is not specified");
       }
       return;
     }
@@ -355,10 +368,10 @@ public class Table implements Serializable {
       if (columnsFound == spec.size()) break;
     }
     if (columnsFound < spec.size()) {
-      throw new SemanticException("Partition spec " + spec + " contains non-partition columns");
+      throw new ValidationFailureSemanticException("Partition spec " + spec + " contains non-partition columns");
     }
     if (shouldBeFull && (spec.size() != partCols.size())) {
-      throw new SemanticException("partition spec " + spec
+      throw new ValidationFailureSemanticException("partition spec " + spec
           + " doesn't contain all (" + partCols.size() + ") partition columns");
     }
   }
@@ -620,42 +633,6 @@ public class Table implements Serializable {
 
   public int getNumBuckets() {
     return tTable.getSd().getNumBuckets();
-  }
-
-  /**
-   * Replaces the directory corresponding to the table by srcf. Works by
-   * deleting the table directory and renaming the source directory.
-   *
-   * @param srcf
-   *          Source directory
-   * @param isSrcLocal
-   *          If the source directory is LOCAL
-   */
-  protected void replaceFiles(Path srcf, boolean isSrcLocal)
-      throws HiveException {
-    Path tableDest = getPath();
-    Hive.replaceFiles(tableDest, srcf, tableDest, tableDest, Hive.get().getConf(),
-        isSrcLocal);
-  }
-
-  /**
-   * Inserts files specified into the partition. Works by moving files
-   *
-   * @param srcf
-   *          Files to be moved. Leaf directories or globbed file paths
-   * @param isSrcLocal
-   *          If the source directory is LOCAL
-   * @param isAcid
-   *          True if this is an ACID based insert, update, or delete
-   */
-  protected void copyFiles(Path srcf, boolean isSrcLocal, boolean isAcid) throws HiveException {
-    FileSystem fs;
-    try {
-      fs = getDataLocation().getFileSystem(Hive.get().getConf());
-      Hive.copyFiles(Hive.get().getConf(), srcf, getPath(), fs, isSrcLocal, isAcid);
-    } catch (IOException e) {
-      throw new HiveException("addFiles: filesystem error in check phase", e);
-    }
   }
 
   public void setInputFormatClass(String name) throws HiveException {
@@ -996,4 +973,13 @@ public class Table implements Serializable {
     }
     return colName.toLowerCase();
   }
+
+  public TableSpec getTableSpec() {
+    return tableSpec;
+  }
+
+  public void setTableSpec(TableSpec tableSpec) {
+    this.tableSpec = tableSpec;
+  }
+
 };

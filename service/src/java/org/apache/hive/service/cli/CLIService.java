@@ -34,6 +34,7 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
+import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.ql.exec.FunctionRegistry;
 import org.apache.hadoop.hive.ql.metadata.Hive;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
@@ -109,14 +110,16 @@ public class CLIService extends CompositeService implements ICLIService {
     // creates connection to HMS and thus *must* occur after kerberos login above
     try {
       applyAuthorizationConfigPolicy(hiveConf);
-    } catch (HiveException e) {
-      throw new RuntimeException("Error applying authorization policy on hive configuration", e);
+    } catch (Exception e) {
+      throw new RuntimeException("Error applying authorization policy on hive configuration: "
+          + e.getMessage(), e);
     }
     setupBlockedUdfs();
     super.init(hiveConf);
   }
 
-  private void applyAuthorizationConfigPolicy(HiveConf newHiveConf) throws HiveException {
+  private void applyAuthorizationConfigPolicy(HiveConf newHiveConf) throws HiveException,
+      MetaException {
     // authorization setup using SessionState should be revisited eventually, as
     // authorization and authentication are not session specific settings
     SessionState ss = new SessionState(newHiveConf);
@@ -142,6 +145,19 @@ public class CLIService extends CompositeService implements ICLIService {
   @Override
   public synchronized void start() {
     super.start();
+    // Initialize and test a connection to the metastore
+    IMetaStoreClient metastoreClient = null;
+    try {
+      metastoreClient = new HiveMetaStoreClient(hiveConf);
+      metastoreClient.getDatabases("default");
+    } catch (Exception e) {
+      throw new ServiceException("Unable to connect to MetaStore!", e);
+    }
+    finally {
+      if (metastoreClient != null) {
+        metastoreClient.close();
+      }
+    }
   }
 
   @Override

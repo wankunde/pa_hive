@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-import javax.jdo.JDODataStoreException;
 import javax.jdo.PersistenceManager;
 import javax.jdo.Query;
 import javax.jdo.Transaction;
@@ -41,10 +40,10 @@ import javax.jdo.datastore.JDOConnection;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.derby.iapi.error.StandardException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.metastore.AggregateStatsCache.AggrColStats;
 import org.apache.hadoop.hive.metastore.api.AggrStats;
 import org.apache.hadoop.hive.metastore.api.ColumnStatistics;
 import org.apache.hadoop.hive.metastore.api.ColumnStatisticsData;
@@ -71,6 +70,7 @@ import org.apache.hadoop.hive.metastore.parser.ExpressionTree.Operator;
 import org.apache.hadoop.hive.metastore.parser.ExpressionTree.TreeNode;
 import org.apache.hadoop.hive.metastore.parser.ExpressionTree.TreeVisitor;
 import org.apache.hadoop.hive.serde.serdeConstants;
+import org.apache.hive.common.util.BloomFilter;
 import org.datanucleus.store.rdbms.query.ForwardQueryResult;
 
 import com.google.common.collect.Lists;
@@ -114,7 +114,8 @@ class MetaStoreDirectSql {
    * Whether direct SQL can be used with the current datastore backing {@link #pm}.
    */
   private final boolean isCompatibleDatastore;
-
+  private final boolean isAggregateStatsCacheEnabled;
+  private AggregateStatsCache aggrStatsCache;
   public MetaStoreDirectSql(PersistenceManager pm, Configuration conf) {
     this.pm = pm;
     this.dbType = determineDbType();
@@ -127,9 +128,21 @@ class MetaStoreDirectSql {
     convertMapNullsToEmptyStrings =
         HiveConf.getBoolVar(conf, ConfVars.METASTORE_ORM_RETRIEVE_MAPNULLS_AS_EMPTY_STRINGS);
 
-    this.isCompatibleDatastore = ensureDbInit() && runTestQuery();
-    if (isCompatibleDatastore) {
-      LOG.info("Using direct SQL, underlying DB is " + dbType);
+    String jdoIdFactory = HiveConf.getVar(conf, ConfVars.METASTORE_IDENTIFIER_FACTORY);
+    if (! ("datanucleus1".equalsIgnoreCase(jdoIdFactory))){
+      LOG.warn("Underlying metastore does not use 'datanuclues1' for its ORM naming scheme."
+          + " Disabling directSQL as it uses hand-hardcoded SQL with that assumption.");
+      isCompatibleDatastore = false;
+    } else {
+      isCompatibleDatastore = ensureDbInit() && runTestQuery();
+      if (isCompatibleDatastore) {
+        LOG.info("Using direct SQL, underlying DB is " + dbType);
+      }
+    }
+
+    isAggregateStatsCacheEnabled = HiveConf.getBoolVar(conf, ConfVars.METASTORE_AGGREGATE_STATS_CACHE_ENABLED);
+    if (isAggregateStatsCacheEnabled) {
+      aggrStatsCache = AggregateStatsCache.getInstance(conf);
     }
   }
 
@@ -165,55 +178,31 @@ class MetaStoreDirectSql {
 
   private boolean ensureDbInit() {
     Transaction tx = pm.currentTransaction();
-    Query dbQuery = null, tblColumnQuery = null, partColumnQuery = null;
     try {
       // Force the underlying db to initialize.
-      dbQuery = pm.newQuery(MDatabase.class, "name == ''");
-      dbQuery.execute();
-
-      tblColumnQuery = pm.newQuery(MTableColumnStatistics.class, "dbName == ''");
-      tblColumnQuery.execute();
-
-      partColumnQuery = pm.newQuery(MPartitionColumnStatistics.class, "dbName == ''");
-      partColumnQuery.execute();
-
+      pm.newQuery(MDatabase.class, "name == ''").execute();
+      pm.newQuery(MTableColumnStatistics.class, "dbName == ''").execute();
+      pm.newQuery(MPartitionColumnStatistics.class, "dbName == ''").execute();
       return true;
     } catch (Exception ex) {
       LOG.warn("Database initialization failed; direct SQL is disabled", ex);
       tx.rollback();
       return false;
-    } finally {
-      if (dbQuery != null) {
-        dbQuery.closeAll();
-      }
-      if (tblColumnQuery != null) {
-        tblColumnQuery.closeAll();
-      }
-      if (partColumnQuery != null) {
-        partColumnQuery.closeAll();
-      }
     }
   }
 
   private boolean runTestQuery() {
     Transaction tx = pm.currentTransaction();
-    Query query = null;
     // Run a self-test query. If it doesn't work, we will self-disable. What a PITA...
     String selfTestQuery = "select \"DB_ID\" from \"DBS\"";
     try {
-      query = pm.newQuery("javax.jdo.query.SQL", selfTestQuery);
-      query.execute();
+      pm.newQuery("javax.jdo.query.SQL", selfTestQuery).execute();
       tx.commit();
       return true;
     } catch (Exception ex) {
       LOG.warn("Self-test query [" + selfTestQuery + "] failed; direct SQL is disabled", ex);
       tx.rollback();
       return false;
-    }
-    finally {
-      if (query != null) {
-        query.closeAll();
-      }
     }
   }
 
@@ -404,21 +393,14 @@ class MetaStoreDirectSql {
   }
 
   private boolean isViewTable(String dbName, String tblName) throws MetaException {
-    Query query = null;
-    try {
-      String queryText = "select \"TBL_TYPE\" from \"TBLS\"" +
-          " inner join \"DBS\" on \"TBLS\".\"DB_ID\" = \"DBS\".\"DB_ID\" " +
-          " where \"TBLS\".\"TBL_NAME\" = ? and \"DBS\".\"NAME\" = ?";
-      Object[] params = new Object[] { tblName, dbName };
-      query = pm.newQuery("javax.jdo.query.SQL", queryText);
-      query.setUnique(true);
-      Object result = executeWithArray(query, params, queryText);
-      return (result != null) && result.toString().equals(TableType.VIRTUAL_VIEW.toString());
-    } finally {
-      if (query != null) {
-        query.closeAll();
-      }
-    }
+    String queryText = "select \"TBL_TYPE\" from \"TBLS\"" +
+        " inner join \"DBS\" on \"TBLS\".\"DB_ID\" = \"DBS\".\"DB_ID\" " +
+        " where \"TBLS\".\"TBL_NAME\" = ? and \"DBS\".\"NAME\" = ?";
+    Object[] params = new Object[] { tblName, dbName };
+    Query query = pm.newQuery("javax.jdo.query.SQL", queryText);
+    query.setUnique(true);
+    Object result = executeWithArray(query, params, queryText);
+    return (result != null) && result.toString().equals(TableType.VIRTUAL_VIEW.toString());
   }
 
   /**
@@ -493,7 +475,7 @@ class MetaStoreDirectSql {
     } else {
       result = getPartitionsFromPartitionIds(dbName, tblName, isView, sqlResult);
     }
- 
+
     timingTrace(doTrace, queryText, start, queryTime);
     query.closeAll();
     return result;
@@ -528,6 +510,7 @@ class MetaStoreDirectSql {
     @SuppressWarnings("unchecked")
     List<Object[]> sqlResult = executeWithArray(query, null, queryText);
     long queryTime = doTrace ? System.nanoTime() : 0;
+    Deadline.checkTimeout();
 
     // Read all the fields and create partitions, SDs and serdes.
     TreeMap<Long, Partition> partitions = new TreeMap<Long, Partition>();
@@ -548,14 +531,14 @@ class MetaStoreDirectSql {
       Long sdId = extractSqlLong(fields[1]);
       Long colId = extractSqlLong(fields[2]);
       Long serdeId = extractSqlLong(fields[3]);
-      // A partition must have either everything set, or nothing set if it's a view.
-      if (sdId == null || colId == null || serdeId == null) {
+      // A partition must have at least sdId and serdeId set, or nothing set if it's a view.
+      if (sdId == null || serdeId == null) {
         if (isView == null) {
           isView = isViewTable(dbName, tblName);
         }
         if ((sdId != null || colId != null || serdeId != null) || !isView) {
-          throw new MetaException("Unexpected null for one of the IDs, SD " + sdId + ", column "
-              + colId + ", serde " + serdeId + " for a " + (isView ? "" : "non-") + " view");
+          throw new MetaException("Unexpected null for one of the IDs, SD " + sdId +
+                  ", serde " + serdeId + " for a " + (isView ? "" : "non-") + " view");
         }
       }
 
@@ -571,7 +554,7 @@ class MetaStoreDirectSql {
       partitions.put(partitionId, part);
 
       if (sdId == null) continue; // Probably a view.
-      assert colId != null && serdeId != null;
+      assert serdeId != null;
 
       // We assume each partition has an unique SD.
       StorageDescriptor sd = new StorageDescriptor();
@@ -596,14 +579,16 @@ class MetaStoreDirectSql {
       sdSb.append(sdId).append(",");
       part.setSd(sd);
 
-      List<FieldSchema> cols = colss.get(colId);
-      // We expect that colId will be the same for all (or many) SDs.
-      if (cols == null) {
-        cols = new ArrayList<FieldSchema>();
-        colss.put(colId, cols);
-        colsSb.append(colId).append(",");
+      if (colId != null) {
+        List<FieldSchema> cols = colss.get(colId);
+        // We expect that colId will be the same for all (or many) SDs.
+        if (cols == null) {
+          cols = new ArrayList<FieldSchema>();
+          colss.put(colId, cols);
+          colsSb.append(colId).append(",");
+        }
+        sd.setCols(cols);
       }
-      sd.setCols(cols);
 
       // We assume each SD has an unique serde.
       SerDeInfo serde = new SerDeInfo();
@@ -616,6 +601,7 @@ class MetaStoreDirectSql {
       serde.setSerializationLib((String)fields[13]);
       serdeSb.append(serdeId).append(",");
       sd.setSerdeInfo(serde);
+      Deadline.checkTimeout();
     }
     query.closeAll();
     timingTrace(doTrace, queryText, start, queryTime);
@@ -644,8 +630,10 @@ class MetaStoreDirectSql {
       assert serdeSb.length() == 0 && colsSb.length() == 0;
       return orderedResult; // No SDs, probably a view.
     }
-    String sdIds = trimCommaList(sdSb), serdeIds = trimCommaList(serdeSb),
-        colIds = trimCommaList(colsSb);
+
+    String sdIds = trimCommaList(sdSb);
+    String serdeIds = trimCommaList(serdeSb);
+    String colIds = trimCommaList(colsSb);
 
     // Get all the stuff for SD. Don't do empty-list check - we expect partitions do have SDs.
     queryText = "select \"SD_ID\", \"PARAM_KEY\", \"PARAM_VALUE\" from \"SD_PARAMS\""
@@ -835,6 +823,15 @@ class MetaStoreDirectSql {
     return value.toString();
   }
 
+  static Double extractSqlDouble(Object obj) throws MetaException {
+    if (obj == null)
+      return null;
+    if (!(obj instanceof Number)) {
+      throw new MetaException("Expected numeric type but got " + obj.getClass().getName());
+    }
+    return ((Number) obj).doubleValue();
+  }
+
   private static String trimCommaList(StringBuilder sb) {
     if (sb.length() > 0) {
       sb.setLength(sb.length() - 1);
@@ -883,6 +880,7 @@ class MetaStoreDirectSql {
         func.apply(entry.getValue(), fields);
         fields = null;
       }
+      Deadline.checkTimeout();
     }
     int rv = list.size();
     query.closeAll();
@@ -1112,15 +1110,73 @@ class MetaStoreDirectSql {
   }
 
   public AggrStats aggrColStatsForPartitions(String dbName, String tableName,
-      List<String> partNames, List<String> colNames) throws MetaException {
+      List<String> partNames, List<String> colNames, boolean useDensityFunctionForNDVEstimation)
+      throws MetaException {
+    if (colNames.isEmpty() || partNames.isEmpty()) {
+      LOG.debug("Columns is empty or partNames is empty : Short-circuiting stats eval");
+      return new AggrStats(new ArrayList<ColumnStatisticsObj>(),0); // Nothing to aggregate
+    }
     long partsFound = partsFoundForPartitions(dbName, tableName, partNames, colNames);
-    List<ColumnStatisticsObj> stats = columnStatisticsObjForPartitions(dbName,
-        tableName, partNames, colNames, partsFound);
-    return new AggrStats(stats, partsFound);
+    List<ColumnStatisticsObj> colStatsList;
+    // Try to read from the cache first
+    if (isAggregateStatsCacheEnabled) {
+      AggrColStats colStatsAggrCached;
+      List<ColumnStatisticsObj> colStatsAggrFromDB;
+      int maxPartsPerCacheNode = aggrStatsCache.getMaxPartsPerCacheNode();
+      float fpp = aggrStatsCache.getFalsePositiveProbability();
+      int partitionsRequested = partNames.size();
+      if (partitionsRequested > maxPartsPerCacheNode) {
+        colStatsList =
+            columnStatisticsObjForPartitions(dbName, tableName, partNames, colNames, partsFound,
+                useDensityFunctionForNDVEstimation);
+      } else {
+        colStatsList = new ArrayList<ColumnStatisticsObj>();
+        // Bloom filter for the new node that we will eventually add to the cache
+        BloomFilter bloomFilter = createPartsBloomFilter(maxPartsPerCacheNode, fpp, partNames);
+        for (String colName : colNames) {
+          // Check the cache first
+          colStatsAggrCached = aggrStatsCache.get(dbName, tableName, colName, partNames);
+          if (colStatsAggrCached != null) {
+            colStatsList.add(colStatsAggrCached.getColStats());
+          } else {
+            List<String> colNamesForDB = new ArrayList<String>();
+            colNamesForDB.add(colName);
+            // Read aggregated stats for one column
+            colStatsAggrFromDB =
+                columnStatisticsObjForPartitions(dbName, tableName, partNames, colNamesForDB,
+                    partsFound, useDensityFunctionForNDVEstimation);
+            if (!colStatsAggrFromDB.isEmpty()) {
+              ColumnStatisticsObj colStatsAggr = colStatsAggrFromDB.get(0);
+              colStatsList.add(colStatsAggr);
+              // Update the cache to add this new aggregate node
+              aggrStatsCache.add(dbName, tableName, colName, partsFound, colStatsAggr, bloomFilter);
+            }
+          }
+        }
+      }
+    } else {
+      colStatsList =
+          columnStatisticsObjForPartitions(dbName, tableName, partNames, colNames, partsFound,
+              useDensityFunctionForNDVEstimation);
+    }
+    LOG.info("useDensityFunctionForNDVEstimation = " + useDensityFunctionForNDVEstimation
+        + "\npartsFound = " + partsFound + "\nColumnStatisticsObj = "
+        + Arrays.toString(colStatsList.toArray()));
+    return new AggrStats(colStatsList, partsFound);
+  }
+
+  private BloomFilter createPartsBloomFilter(int maxPartsPerCacheNode, float fpp,
+      List<String> partNames) {
+    BloomFilter bloomFilter = new BloomFilter(maxPartsPerCacheNode, fpp);
+    for (String partName : partNames) {
+      bloomFilter.add(partName.getBytes());
+    }
+    return bloomFilter;
   }
 
   private long partsFoundForPartitions(String dbName, String tableName,
       List<String> partNames, List<String> colNames) throws MetaException {
+    assert !colNames.isEmpty() && !partNames.isEmpty();
     long partsFound = 0;
     boolean doTrace = LOG.isDebugEnabled();
     String queryText = "select count(\"COLUMN_NAME\") from \"PART_COL_STATS\""
@@ -1141,19 +1197,36 @@ class MetaStoreDirectSql {
         partsFound++;
       }
     }
-    query.closeAll();
     return partsFound;
   }
 
-  private List<ColumnStatisticsObj> columnStatisticsObjForPartitions(
-      String dbName, String tableName, List<String> partNames,
-      List<String> colNames, long partsFound) throws MetaException {
+  private List<ColumnStatisticsObj> columnStatisticsObjForPartitions(String dbName,
+      String tableName, List<String> partNames, List<String> colNames, long partsFound,
+      boolean useDensityFunctionForNDVEstimation) throws MetaException {
     // TODO: all the extrapolation logic should be moved out of this class,
-    //       only mechanical data retrieval should remain here.
+    // only mechanical data retrieval should remain here.
     String commonPrefix = "select \"COLUMN_NAME\", \"COLUMN_TYPE\", "
         + "min(\"LONG_LOW_VALUE\"), max(\"LONG_HIGH_VALUE\"), min(\"DOUBLE_LOW_VALUE\"), max(\"DOUBLE_HIGH_VALUE\"), "
-        + "min(\"BIG_DECIMAL_LOW_VALUE\"), max(\"BIG_DECIMAL_HIGH_VALUE\"), sum(\"NUM_NULLS\"), max(\"NUM_DISTINCTS\"), "
-        + "max(\"AVG_COL_LEN\"), max(\"MAX_COL_LEN\"), sum(\"NUM_TRUES\"), sum(\"NUM_FALSES\") from \"PART_COL_STATS\""
+        + "min(cast(\"BIG_DECIMAL_LOW_VALUE\" as decimal)), max(cast(\"BIG_DECIMAL_HIGH_VALUE\" as decimal)), "
+        + "sum(\"NUM_NULLS\"), max(\"NUM_DISTINCTS\"), "
+        + "max(\"AVG_COL_LEN\"), max(\"MAX_COL_LEN\"), sum(\"NUM_TRUES\"), sum(\"NUM_FALSES\"), "
+        // The following data is used to compute a partitioned table's NDV based
+        // on partitions' NDV when useDensityFunctionForNDVEstimation = true. Global NDVs cannot be
+        // accurately derived from partition NDVs, because the domain of column value two partitions
+        // can overlap. If there is no overlap then global NDV is just the sum
+        // of partition NDVs (UpperBound). But if there is some overlay then
+        // global NDV can be anywhere between sum of partition NDVs (no overlap)
+        // and same as one of the partition NDV (domain of column value in all other
+        // partitions is subset of the domain value in one of the partition)
+        // (LowerBound).But under uniform distribution, we can roughly estimate the global
+        // NDV by leveraging the min/max values.
+        // And, we also guarantee that the estimation makes sense by comparing it to the
+        // UpperBound (calculated by "sum(\"NUM_DISTINCTS\")")
+        // and LowerBound (calculated by "max(\"NUM_DISTINCTS\")")
+        + "avg((\"LONG_HIGH_VALUE\"-\"LONG_LOW_VALUE\")/cast(\"NUM_DISTINCTS\" as decimal)),"
+        + "avg((\"DOUBLE_HIGH_VALUE\"-\"DOUBLE_LOW_VALUE\")/\"NUM_DISTINCTS\"),"
+        + "avg((cast(\"BIG_DECIMAL_HIGH_VALUE\" as decimal)-cast(\"BIG_DECIMAL_LOW_VALUE\" as decimal))/\"NUM_DISTINCTS\"),"
+        + "sum(\"NUM_DISTINCTS\")" + " from \"PART_COL_STATS\""
         + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ? ";
     String queryText = null;
     long start = 0;
@@ -1165,14 +1238,13 @@ class MetaStoreDirectSql {
     // Check if the status of all the columns of all the partitions exists
     // Extrapolation is not needed.
     if (partsFound == partNames.size()) {
-      queryText = commonPrefix
-          + " and \"COLUMN_NAME\" in (" + makeParams(colNames.size()) + ")"
+      queryText = commonPrefix + " and \"COLUMN_NAME\" in (" + makeParams(colNames.size()) + ")"
           + " and \"PARTITION_NAME\" in (" + makeParams(partNames.size()) + ")"
           + " group by \"COLUMN_NAME\", \"COLUMN_TYPE\"";
       start = doTrace ? System.nanoTime() : 0;
       query = pm.newQuery("javax.jdo.query.SQL", queryText);
-      qResult = executeWithArray(query, prepareParams(
-          dbName, tableName, partNames, colNames), queryText);
+      qResult = executeWithArray(query, prepareParams(dbName, tableName, partNames, colNames),
+          queryText);
       if (qResult == null) {
         query.closeAll();
         return Lists.newArrayList();
@@ -1180,10 +1252,10 @@ class MetaStoreDirectSql {
       end = doTrace ? System.nanoTime() : 0;
       timingTrace(doTrace, queryText, start, end);
       List<Object[]> list = ensureList(qResult);
-      List<ColumnStatisticsObj> colStats = new ArrayList<ColumnStatisticsObj>(
-          list.size());
+      List<ColumnStatisticsObj> colStats = new ArrayList<ColumnStatisticsObj>(list.size());
       for (Object[] row : list) {
-        colStats.add(prepareCSObj(row, 0));
+        colStats.add(prepareCSObjWithAdjustedNDV(row, 0, useDensityFunctionForNDVEstimation));
+        Deadline.checkTimeout();
       }
       query.closeAll();
       return colStats;
@@ -1191,18 +1263,16 @@ class MetaStoreDirectSql {
       // Extrapolation is needed for some columns.
       // In this case, at least a column status for a partition is missing.
       // We need to extrapolate this partition based on the other partitions
-      List<ColumnStatisticsObj> colStats = new ArrayList<ColumnStatisticsObj>(
-          colNames.size());
+      List<ColumnStatisticsObj> colStats = new ArrayList<ColumnStatisticsObj>(colNames.size());
       queryText = "select \"COLUMN_NAME\", \"COLUMN_TYPE\", count(\"PARTITION_NAME\") "
-          + " from \"PART_COL_STATS\""
-          + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ? "
+          + " from \"PART_COL_STATS\"" + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ? "
           + " and \"COLUMN_NAME\" in (" + makeParams(colNames.size()) + ")"
           + " and \"PARTITION_NAME\" in (" + makeParams(partNames.size()) + ")"
           + " group by \"COLUMN_NAME\", \"COLUMN_TYPE\"";
       start = doTrace ? System.nanoTime() : 0;
       query = pm.newQuery("javax.jdo.query.SQL", queryText);
-      qResult = executeWithArray(query, prepareParams(
-          dbName, tableName, partNames, colNames), queryText);
+      qResult = executeWithArray(query, prepareParams(dbName, tableName, partNames, colNames),
+          queryText);
       end = doTrace ? System.nanoTime() : 0;
       timingTrace(doTrace, queryText, start, end);
       if (qResult == null) {
@@ -1225,25 +1295,26 @@ class MetaStoreDirectSql {
         } else {
           extraColumnNameTypeParts.put(colName, new String[] { colType, String.valueOf(count) });
         }
+        Deadline.checkTimeout();
       }
       query.closeAll();
       // Extrapolation is not needed for columns noExtraColumnNames
       if (noExtraColumnNames.size() != 0) {
-        queryText = commonPrefix
-            + " and \"COLUMN_NAME\" in ("+ makeParams(noExtraColumnNames.size()) + ")"
-            + " and \"PARTITION_NAME\" in ("+ makeParams(partNames.size()) +")"
-            + " group by \"COLUMN_NAME\", \"COLUMN_TYPE\"";
+        queryText = commonPrefix + " and \"COLUMN_NAME\" in ("
+            + makeParams(noExtraColumnNames.size()) + ")" + " and \"PARTITION_NAME\" in ("
+            + makeParams(partNames.size()) + ")" + " group by \"COLUMN_NAME\", \"COLUMN_TYPE\"";
         start = doTrace ? System.nanoTime() : 0;
         query = pm.newQuery("javax.jdo.query.SQL", queryText);
-        qResult = executeWithArray(query, prepareParams(
-            dbName, tableName, partNames, noExtraColumnNames), queryText);
+        qResult = executeWithArray(query,
+            prepareParams(dbName, tableName, partNames, noExtraColumnNames), queryText);
         if (qResult == null) {
           query.closeAll();
           return Lists.newArrayList();
         }
         list = ensureList(qResult);
         for (Object[] row : list) {
-          colStats.add(prepareCSObj(row, 0));
+          colStats.add(prepareCSObjWithAdjustedNDV(row, 0, useDensityFunctionForNDVEstimation));
+          Deadline.checkTimeout();
         }
         end = doTrace ? System.nanoTime() : 0;
         timingTrace(doTrace, queryText, start, end);
@@ -1258,37 +1329,42 @@ class MetaStoreDirectSql {
         }
         // get sum for all columns to reduce the number of queries
         Map<String, Map<Integer, Object>> sumMap = new HashMap<String, Map<Integer, Object>>();
-        queryText = "select \"COLUMN_NAME\", sum(\"NUM_NULLS\"), sum(\"NUM_TRUES\"), sum(\"NUM_FALSES\")"
+        queryText = "select \"COLUMN_NAME\", sum(\"NUM_NULLS\"), sum(\"NUM_TRUES\"), sum(\"NUM_FALSES\"), sum(\"NUM_DISTINCTS\")"
             + " from \"PART_COL_STATS\""
             + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ? "
-            + " and \"COLUMN_NAME\" in (" +makeParams(extraColumnNameTypeParts.size())+ ")"
-            + " and \"PARTITION_NAME\" in (" + makeParams(partNames.size()) + ")"
+            + " and \"COLUMN_NAME\" in ("
+            + makeParams(extraColumnNameTypeParts.size())
+            + ")"
+            + " and \"PARTITION_NAME\" in ("
+            + makeParams(partNames.size())
+            + ")"
             + " group by \"COLUMN_NAME\"";
         start = doTrace ? System.nanoTime() : 0;
         query = pm.newQuery("javax.jdo.query.SQL", queryText);
         List<String> extraColumnNames = new ArrayList<String>();
         extraColumnNames.addAll(extraColumnNameTypeParts.keySet());
-        qResult = executeWithArray(query, prepareParams(
-            dbName, tableName, partNames, extraColumnNames), queryText);
+        qResult = executeWithArray(query,
+            prepareParams(dbName, tableName, partNames, extraColumnNames), queryText);
         if (qResult == null) {
           query.closeAll();
           return Lists.newArrayList();
         }
         list = ensureList(qResult);
         // see the indexes for colstats in IExtrapolatePartStatus
-        Integer[] sumIndex = new Integer[] { 6, 10, 11 };
+        Integer[] sumIndex = new Integer[] { 6, 10, 11, 15 };
         for (Object[] row : list) {
           Map<Integer, Object> indexToObject = new HashMap<Integer, Object>();
           for (int ind = 1; ind < row.length; ind++) {
             indexToObject.put(sumIndex[ind - 1], row[ind]);
           }
+          // row[0] is the column name
           sumMap.put((String) row[0], indexToObject);
+          Deadline.checkTimeout();
         }
         end = doTrace ? System.nanoTime() : 0;
         timingTrace(doTrace, queryText, start, end);
         query.closeAll();
-        for (Map.Entry<String, String[]> entry : extraColumnNameTypeParts
-            .entrySet()) {
+        for (Map.Entry<String, String[]> entry : extraColumnNameTypeParts.entrySet()) {
           Object[] row = new Object[IExtrapolatePartStatus.colStatNames.length + 2];
           String colName = entry.getKey();
           String colType = entry.getValue()[0];
@@ -1297,12 +1373,20 @@ class MetaStoreDirectSql {
           row[0] = colName;
           // fill in coltype
           row[1] = colType;
-          // use linear extrapolation. more complicated one can be added in the future.
+          // use linear extrapolation. more complicated one can be added in the
+          // future.
           IExtrapolatePartStatus extrapolateMethod = new LinearExtrapolatePartStatus();
           // fill in colstatus
-          Integer[] index = IExtrapolatePartStatus.indexMaps.get(colType
-              .toLowerCase());
-          //if the colType is not the known type, long, double, etc, then get all index.
+          Integer[] index = null;
+          boolean decimal = false;
+          if (colType.toLowerCase().startsWith("decimal")) {
+            index = IExtrapolatePartStatus.indexMaps.get("decimal");
+            decimal = true;
+          } else {
+            index = IExtrapolatePartStatus.indexMaps.get(colType.toLowerCase());
+          }
+          // if the colType is not the known type, long, double, etc, then get
+          // all index.
           if (index == null) {
             index = IExtrapolatePartStatus.indexMaps.get("default");
           }
@@ -1317,20 +1401,27 @@ class MetaStoreDirectSql {
                 Long val = extractSqlLong(o);
                 row[2 + colStatIndex] = (Long) (val / sumVal * (partNames.size()));
               }
-            } else {
+            } else if (IExtrapolatePartStatus.aggrTypes[colStatIndex] == IExtrapolatePartStatus.AggrType.Min
+                || IExtrapolatePartStatus.aggrTypes[colStatIndex] == IExtrapolatePartStatus.AggrType.Max) {
               // if the aggregation type is min/max, we extrapolate from the
               // left/right borders
-              queryText = "select \""
-                  + colStatName
-                  + "\",\"PARTITION_NAME\" from \"PART_COL_STATS\""
-                  + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ?"
-                  + " and \"COLUMN_NAME\" = ?"
-                  + " and \"PARTITION_NAME\" in (" + makeParams(partNames.size()) + ")"
-                  + " order by \'" + colStatName + "\'";
+              if (!decimal) {
+                queryText = "select \"" + colStatName
+                    + "\",\"PARTITION_NAME\" from \"PART_COL_STATS\""
+                    + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ?" + " and \"COLUMN_NAME\" = ?"
+                    + " and \"PARTITION_NAME\" in (" + makeParams(partNames.size()) + ")"
+                    + " order by \"" + colStatName + "\"";
+              } else {
+                queryText = "select \"" + colStatName
+                    + "\",\"PARTITION_NAME\" from \"PART_COL_STATS\""
+                    + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ?" + " and \"COLUMN_NAME\" = ?"
+                    + " and \"PARTITION_NAME\" in (" + makeParams(partNames.size()) + ")"
+                    + " order by cast(\"" + colStatName + "\" as decimal)";
+              }
               start = doTrace ? System.nanoTime() : 0;
               query = pm.newQuery("javax.jdo.query.SQL", queryText);
-              qResult = executeWithArray(query, prepareParams(
-                  dbName, tableName, partNames, Arrays.asList(colName)), queryText);
+              qResult = executeWithArray(query,
+                  prepareParams(dbName, tableName, partNames, Arrays.asList(colName)), queryText);
               if (qResult == null) {
                 query.closeAll();
                 return Lists.newArrayList();
@@ -1344,12 +1435,39 @@ class MetaStoreDirectSql {
               if (min[0] == null || max[0] == null) {
                 row[2 + colStatIndex] = null;
               } else {
-                row[2 + colStatIndex] = extrapolateMethod.extrapolate(min, max,
-                    colStatIndex, indexMap);
+                row[2 + colStatIndex] = extrapolateMethod.extrapolate(min, max, colStatIndex,
+                    indexMap);
               }
+            } else {
+              // if the aggregation type is avg, we use the average on the
+              // existing ones.
+              queryText = "select "
+                  + "avg((\"LONG_HIGH_VALUE\"-\"LONG_LOW_VALUE\")/cast(\"NUM_DISTINCTS\" as decimal)),"
+                  + "avg((\"DOUBLE_HIGH_VALUE\"-\"DOUBLE_LOW_VALUE\")/\"NUM_DISTINCTS\"),"
+                  + "avg((cast(\"BIG_DECIMAL_HIGH_VALUE\" as decimal)-cast(\"BIG_DECIMAL_LOW_VALUE\" as decimal))/\"NUM_DISTINCTS\")"
+                  + " from \"PART_COL_STATS\"" + " where \"DB_NAME\" = ? and \"TABLE_NAME\" = ?"
+                  + " and \"COLUMN_NAME\" = ?" + " and \"PARTITION_NAME\" in ("
+                  + makeParams(partNames.size()) + ")" + " group by \"COLUMN_NAME\"";
+              start = doTrace ? System.nanoTime() : 0;
+              query = pm.newQuery("javax.jdo.query.SQL", queryText);
+              qResult = executeWithArray(query,
+                  prepareParams(dbName, tableName, partNames, Arrays.asList(colName)), queryText);
+              if (qResult == null) {
+                query.closeAll();
+                return Lists.newArrayList();
+              }
+              fqr = (ForwardQueryResult) qResult;
+              Object[] avg = (Object[]) (fqr.get(0));
+              // colStatIndex=12,13,14 respond to "AVG_LONG", "AVG_DOUBLE",
+              // "AVG_DECIMAL"
+              row[2 + colStatIndex] = avg[colStatIndex - 12];
+              end = doTrace ? System.nanoTime() : 0;
+              timingTrace(doTrace, queryText, start, end);
+              query.closeAll();
             }
           }
-          colStats.add(prepareCSObj(row, 0));
+          colStats.add(prepareCSObjWithAdjustedNDV(row, 0, useDensityFunctionForNDVEstimation));
+          Deadline.checkTimeout();
         }
       }
       return colStats;
@@ -1364,6 +1482,17 @@ class MetaStoreDirectSql {
         avglen = row[i++], maxlen = row[i++], trues = row[i++], falses = row[i++];
     StatObjectConverter.fillColumnStatisticsData(cso.getColType(), data,
         llow, lhigh, dlow, dhigh, declow, dechigh, nulls, dist, avglen, maxlen, trues, falses);
+    return cso;
+  }
+
+  private ColumnStatisticsObj prepareCSObjWithAdjustedNDV(Object[] row, int i,
+      boolean useDensityFunctionForNDVEstimation) throws MetaException {
+    ColumnStatisticsData data = new ColumnStatisticsData();
+    ColumnStatisticsObj cso = new ColumnStatisticsObj((String) row[i++], (String) row[i++], data);
+    Object llow = row[i++], lhigh = row[i++], dlow = row[i++], dhigh = row[i++], declow = row[i++], dechigh = row[i++], nulls = row[i++], dist = row[i++], avglen = row[i++], maxlen = row[i++], trues = row[i++], falses = row[i++], avgLong = row[i++], avgDouble = row[i++], avgDecimal = row[i++], sumDist = row[i++];
+    StatObjectConverter.fillColumnStatisticsData(cso.getColType(), data, llow, lhigh, dlow, dhigh,
+        declow, dechigh, nulls, dist, avglen, maxlen, trues, falses, avgLong, avgDouble,
+        avgDecimal, sumDist, useDensityFunctionForNDVEstimation);
     return cso;
   }
 
@@ -1383,7 +1512,7 @@ class MetaStoreDirectSql {
 
     return params;
   }
-  
+
   public List<ColumnStatistics> getPartitionStats(String dbName, String tableName,
       List<String> partNames, List<String> colNames) throws MetaException {
     if (colNames.isEmpty() || partNames.isEmpty()) {
@@ -1421,6 +1550,7 @@ class MetaStoreDirectSql {
       }
       lastPartName = partName;
       from = i;
+      Deadline.checkTimeout();
     }
 
     timingTrace(doTrace, queryText, start, queryTime);
@@ -1448,6 +1578,7 @@ class MetaStoreDirectSql {
         csd.setLastAnalyzed(extractSqlLong(laObj));
       }
       csos.add(prepareCSObj(row, offset));
+      Deadline.checkTimeout();
     }
     result.setStatsObj(csos);
     return result;

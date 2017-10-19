@@ -18,14 +18,12 @@
 
 package org.apache.hadoop.hive.ql.exec.persistence;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.Random;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.serde2.SerDe;
 import org.apache.hadoop.hive.serde2.SerDeException;
@@ -39,13 +37,11 @@ import org.apache.hadoop.io.Text;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static org.junit.Assert.assertEquals;
-
 @SuppressWarnings("deprecation")
 public class TestPTFRowContainer {
 
-  private static final String COL_NAMES = "x,y,z,a,b,v";
-  private static final String COL_TYPES = "int,string,double,int,string,string";
+  private static final String COL_NAMES = "x,y,z,a,b";
+  private static final String COL_TYPES = "int,string,double,int,string";
 
   static SerDe serDe;
   static Configuration cfg;
@@ -74,7 +70,7 @@ public class TestPTFRowContainer {
     return rc;
   }
 
-  private void runTest(int sz, int blockSize, String value) throws SerDeException, HiveException {
+  private void runTest(int sz, int blockSize) throws SerDeException, HiveException {
     List<Object> row;
 
     PTFRowContainer<List<Object>> rc = rowContainer(blockSize);
@@ -86,17 +82,16 @@ public class TestPTFRowContainer {
       row.add(new DoubleWritable(i));
       row.add(new IntWritable(i));
       row.add(new Text("def " + i));
-      row.add(new Text(value));
       rc.addRow(row);
     }
 
     // test forward scan
-    assertEquals(sz, rc.rowCount());
+    assert(rc.rowCount() == sz);
     i = 0;
     row = new ArrayList<Object>();
     row = rc.first();
     while(row != null ) {
-      assertEquals("abc " + i, row.get(1).toString());
+      assert(row.get(1).toString().equals("abc " + i));
       i++;
       row = rc.next();
     }
@@ -105,7 +100,7 @@ public class TestPTFRowContainer {
     row = rc.first();
     for(i = sz - 1; i >= 0; i-- ) {
       row = rc.getAt(i);
-      assertEquals("abc " + i, row.get(1).toString());
+      assert(row.get(1).toString().equals("abc " + i));
     }
 
     Random r = new Random(1000L);
@@ -114,24 +109,20 @@ public class TestPTFRowContainer {
     for(i=0; i < 100; i++) {
       int j = r.nextInt(sz);
       row = rc.getAt(j);
-      assertEquals("abc " + j, row.get(1).toString());
+      assert(row.get(1).toString().equals("abc " + j));
     }
 
     // intersperse getAt and next calls
     for(i=0; i < 100; i++) {
       int j = r.nextInt(sz);
       row = rc.getAt(j);
-      assertEquals("abc " + j, row.get(1).toString());
+      assert(row.get(1).toString().equals("abc " + j));
       for(int k = j + 1; k < j + (blockSize/4) && k < sz; k++) {
         row = rc.next();
-        assertEquals("def " + k, row.get(4).toString());
+        assert(row.get(4).toString().equals("def " + k));
       }
     }
 
-  }
-
-  private void runTest(int sz, int blockSize) throws SerDeException, HiveException {
-    runTest(sz, blockSize, "");
   }
 
   @Test
@@ -142,10 +133,5 @@ public class TestPTFRowContainer {
   @Test
   public void testSmallBlockSize() throws SerDeException, HiveException {
     runTest(10 * 1000, 5);
-  }
-
-  @Test
-  public void testBlocksLargerThanSplit() throws SerDeException, HiveException, IOException {
-    runTest(5, 2, new String(new char[(int)FileSystem.getLocal(cfg).getDefaultBlockSize()]));
   }
 }

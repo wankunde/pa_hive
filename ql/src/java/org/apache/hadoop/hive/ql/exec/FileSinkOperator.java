@@ -18,16 +18,22 @@
 
 package org.apache.hadoop.hive.ql.exec;
 
+import static org.apache.hadoop.hive.conf.HiveConf.ConfVars.HIVE_TEMPORARY_TABLE_STORAGE;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.Serializable;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.Future;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -55,6 +61,7 @@ import org.apache.hadoop.hive.ql.plan.FileSinkDesc.DPSortState;
 import org.apache.hadoop.hive.ql.plan.ListBucketingCtx;
 import org.apache.hadoop.hive.ql.plan.PlanUtils;
 import org.apache.hadoop.hive.ql.plan.SkewedColumnPositionPair;
+import org.apache.hadoop.hive.ql.plan.TableDesc;
 import org.apache.hadoop.hive.ql.plan.api.OperatorType;
 import org.apache.hadoop.hive.ql.stats.StatsCollectionTaskIndependent;
 import org.apache.hadoop.hive.ql.stats.StatsPublisher;
@@ -68,6 +75,9 @@ import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.SubStructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.IntObjectInspector;
+import org.apache.hadoop.hive.shims.HadoopShims.StoragePolicyShim;
+import org.apache.hadoop.hive.shims.HadoopShims.StoragePolicyValue;
+import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.JobConf;
@@ -88,6 +98,7 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
   protected transient List<String> dpColNames;
   protected transient DynamicPartitionCtx dpCtx;
   protected transient boolean isCompressed;
+  protected transient boolean isTemporary;
   protected transient Path parent;
   protected transient HiveOutputFormat<?, ?> hiveOutputFormat;
   protected transient Path specPath;
@@ -110,6 +121,7 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
   private IntObjectInspector bucketInspector; // OI for inspecting bucket id
   protected transient long numRows = 0;
   protected transient long cntr = 1;
+  protected transient long logEveryNRows = 0;
 
   /**
    * Counters.
@@ -313,11 +325,13 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
   }
 
   @Override
-  protected void initializeOp(Configuration hconf) throws HiveException {
+  protected Collection<Future<?>> initializeOp(Configuration hconf) throws HiveException {
+    Collection<Future<?>> result = super.initializeOp(hconf);
     try {
       this.hconf = hconf;
       filesCreated = false;
       isNativeTable = !conf.getTableInfo().isNonNative();
+      isTemporary = conf.isTemporary();
       multiFileSpray = conf.isMultiFileSpray();
       totalFiles = conf.getTotalFiles();
       numFiles = conf.getNumFiles();
@@ -328,7 +342,12 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
       taskId = Utilities.getTaskId(hconf);
       initializeSpecPath();
       fs = specPath.getFileSystem(hconf);
-      hiveOutputFormat = HiveFileFormatUtils.getHiveOutputFormat(hconf, conf.getTableInfo());
+      try {
+        createHiveOutputFormat(hconf);
+      } catch (HiveException ex) {
+        logOutputFormatError(hconf, ex);
+        throw ex;
+      }
       isCompressed = conf.getCompressed();
       parent = Utilities.toTempPath(conf.getDirName());
       statsCollectRawDataSize = conf.isStatsCollectRawDataSize();
@@ -385,6 +404,20 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
         }
       }
 
+      final StoragePolicyValue tmpStorage = StoragePolicyValue.lookup(HiveConf
+                                            .getVar(hconf, HIVE_TEMPORARY_TABLE_STORAGE));
+      if (isTemporary && fsp != null
+          && tmpStorage != StoragePolicyValue.DEFAULT) {
+        final Path outputPath = fsp.taskOutputTempPath;
+        StoragePolicyShim shim = ShimLoader.getHadoopShims()
+            .getStoragePolicyShim(fs);
+        if (shim != null) {
+          // directory creation is otherwise within the writers
+          fs.mkdirs(outputPath);
+          shim.setStoragePolicy(outputPath, tmpStorage);
+        }
+      }
+
       if (conf.getWriteType() == AcidUtils.Operation.UPDATE ||
           conf.getWriteType() == AcidUtils.Operation.DELETE) {
         // ROW__ID is always in the first field
@@ -396,6 +429,8 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
       }
 
       numRows = 0;
+      cntr = 1;
+      logEveryNRows = HiveConf.getLongVar(hconf, HiveConf.ConfVars.HIVE_LOG_N_RECORDS);
 
       String suffix = Integer.toString(conf.getDestTableId());
       String fullName = conf.getTableInfo().getTableName();
@@ -404,14 +439,33 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
       }
 
       statsMap.put(Counter.RECORDS_OUT + "_" + suffix, row_count);
-
-      initializeChildren(hconf);
     } catch (HiveException e) {
       throw e;
     } catch (Exception e) {
       e.printStackTrace();
       throw new HiveException(e);
     }
+    return result;
+  }
+
+  private void logOutputFormatError(Configuration hconf, HiveException ex) {
+    StringWriter errorWriter = new StringWriter();
+    errorWriter.append("Failed to create output format; configuration: ");
+    try {
+      Configuration.dumpConfiguration(hconf, errorWriter);
+    } catch (IOException ex2) {
+      errorWriter.append("{ failed to dump configuration: " + ex2.getMessage() + " }");
+    }
+    Properties tdp = null;
+    if (this.conf.getTableInfo() != null
+        && (tdp = this.conf.getTableInfo().getProperties()) != null) {
+      errorWriter.append(";\n table properties: { ");
+      for (Map.Entry<Object, Object> e : tdp.entrySet()) {
+        errorWriter.append(e.getKey() + ": " + e.getValue() + ", ");
+      }
+      errorWriter.append('}');
+    }
+    LOG.error(errorWriter.toString(), ex);
   }
 
   /**
@@ -609,7 +663,7 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
   protected Writable recordValue;
 
   @Override
-  public void processOp(Object row, int tag) throws HiveException {
+  public void process(Object row, int tag) throws HiveException {
     /* Create list bucketing sub-directory only if stored-as-directories is on. */
     String lbDirName = null;
     lbDirName = (lbCtx == null) ? null : generateListBucketingDirName(row);
@@ -681,8 +735,12 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
         fpaths.stat.addToStat(StatsSetupConst.ROW_COUNT, 1);
       }
 
-      if (++numRows == cntr) {
-        cntr *= 10;
+      if ((++numRows == cntr) && isLogInfoEnabled) {
+        cntr = logEveryNRows == 0 ? cntr * 10 : numRows + logEveryNRows;
+        if (cntr < 0 || numRows < 0) {
+          cntr = 0;
+          numRows = 1;
+        }
         LOG.info(toString() + ": records written - " + numRows);
       }
 
@@ -946,7 +1004,7 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
   public void closeOp(boolean abort) throws HiveException {
 
     row_count.set(numRows);
-    LOG.info(toString() + ": records written - " + numRows);    
+    LOG.info(toString() + ": records written - " + numRows);
 
     if (!bDynParts && !filesCreated) {
       createBucketFiles(fsp);
@@ -1052,10 +1110,10 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
 
   public void checkOutputSpecs(FileSystem ignored, JobConf job) throws IOException {
     if (hiveOutputFormat == null) {
-      Utilities.copyTableJobPropertiesToConf(conf.getTableInfo(), job);
       try {
-        hiveOutputFormat = HiveFileFormatUtils.getHiveOutputFormat(job, getConf().getTableInfo());
-      } catch (Exception ex) {
+        createHiveOutputFormat(job);
+      } catch (HiveException ex) {
+        logOutputFormatError(job, ex);
         throw new IOException(ex);
       }
     }
@@ -1068,6 +1126,17 @@ public class FileSinkOperator extends TerminalOperator<FileSinkDesc> implements
         //For BC, ignore this for now, but leave a log message
         LOG.warn("HiveOutputFormat should implement checkOutputSpecs() method`");
       }
+    }
+  }
+
+  private void createHiveOutputFormat(Configuration hconf) throws HiveException {
+    if (hiveOutputFormat == null) {
+      Utilities.copyTableJobPropertiesToConf(conf.getTableInfo(), hconf);
+    }
+    try {
+      hiveOutputFormat = HiveFileFormatUtils.getHiveOutputFormat(hconf, getConf().getTableInfo());
+    } catch (Throwable t) {
+      throw (t instanceof HiveException) ? (HiveException)t : new HiveException(t);
     }
   }
 

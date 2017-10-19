@@ -20,18 +20,13 @@ package org.apache.hive.service.cli.operation;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.hive.common.metrics.common.Metrics;
-import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
-import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
-import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Schema;
 import org.apache.hadoop.hive.ql.session.OperationLog;
@@ -46,10 +41,7 @@ import org.apache.hive.service.cli.RowSetFactory;
 import org.apache.hive.service.cli.TableSchema;
 import org.apache.hive.service.cli.session.HiveSession;
 import org.apache.log4j.Appender;
-import org.apache.log4j.ConsoleAppender;
-import org.apache.log4j.Layout;
 import org.apache.log4j.Logger;
-import org.apache.log4j.PatternLayout;
 
 /**
  * OperationManager.
@@ -58,7 +50,6 @@ import org.apache.log4j.PatternLayout;
 public class OperationManager extends AbstractService {
   private final Log LOG = LogFactory.getLog(OperationManager.class.getName());
 
-  private HiveConf hiveConf;
   private final Map<OperationHandle, Operation> handleToOperation =
       new HashMap<OperationHandle, Operation>();
 
@@ -68,10 +59,9 @@ public class OperationManager extends AbstractService {
 
   @Override
   public synchronized void init(HiveConf hiveConf) {
-    this.hiveConf = hiveConf;
     if (hiveConf.getBoolVar(HiveConf.ConfVars.HIVE_SERVER2_LOGGING_OPERATION_ENABLED)) {
-      boolean isVerbose = hiveConf.getBoolVar(HiveConf.ConfVars.HIVE_SERVER2_LOGGING_OPERATION_VERBOSE);
-      initOperationLogCapture(isVerbose);
+      initOperationLogCapture(hiveConf.getVar(
+        HiveConf.ConfVars.HIVE_SERVER2_LOGGING_OPERATION_LEVEL));
     } else {
       LOG.debug("Operation level logging is turned off");
     }
@@ -90,34 +80,10 @@ public class OperationManager extends AbstractService {
     super.stop();
   }
 
-  private void initOperationLogCapture(boolean isVerbose) {
-    // There should be a ConsoleAppender. Copy its Layout.
-    Logger root = Logger.getRootLogger();
-    Layout layout = null;
-
-    Enumeration<?> appenders = root.getAllAppenders();
-    while (appenders.hasMoreElements()) {
-      Appender ap = (Appender) appenders.nextElement();
-      if (ap.getClass().equals(ConsoleAppender.class)) {
-        layout = ap.getLayout();
-        break;
-      }
-    }
-
-    final String VERBOSE_PATTERN = "%d{yy/MM/dd HH:mm:ss} %p %c{2}: %m%n";
-    final String NONVERBOSE_PATTERN = "%-5p : %m%n";
-
-    if (isVerbose) {
-      if (layout == null) {
-        layout = new PatternLayout(VERBOSE_PATTERN);
-        LOG.info("Cannot find a Layout from a ConsoleAppender. Using default Layout pattern.");
-      }
-    } else {
-      layout = new PatternLayout(NONVERBOSE_PATTERN);
-    }
+  private void initOperationLogCapture(String loggingMode) {
     // Register another Appender (with the same layout) that talks to us.
-    Appender ap = new LogDivertAppender(layout, this, isVerbose);
-    root.addAppender(ap);
+    Appender ap = new LogDivertAppender(this, OperationLog.getLoggingLevel(loggingMode));
+    Logger.getRootLogger().addAppender(ap);
   }
 
   public ExecuteStatementOperation newExecuteStatementOperation(HiveSession parentSession,
@@ -235,14 +201,6 @@ public class OperationManager extends AbstractService {
     if (operation == null) {
       throw new HiveSQLException("Operation does not exist!");
     }
-    Metrics metrics = MetricsFactory.getInstance();
-    if (metrics != null) {
-      try {
-        metrics.decrementCounter(MetricsConstant.OPEN_OPERATIONS);
-      } catch (Exception e) {
-        LOG.warn("Error Reporting close operation to Metrics system", e);
-      }
-    }
     operation.close();
   }
 
@@ -263,21 +221,13 @@ public class OperationManager extends AbstractService {
   }
 
   public RowSet getOperationLogRowSet(OperationHandle opHandle,
-      FetchOrientation orientation, long maxRows, HiveConf hConf)
+      FetchOrientation orientation, long maxRows)
           throws HiveSQLException {
-    TableSchema tableSchema = new TableSchema(getLogSchema());
-    RowSet rowSet = RowSetFactory.create(tableSchema, getOperation(opHandle).getProtocolVersion());
-
-    if (hConf.getBoolVar(ConfVars.HIVE_SERVER2_LOGGING_OPERATION_ENABLED) == false) {
-      LOG.warn("Try to get operation log when hive.server2.logging.operation.enabled is false, no log will be returned. ");
-      return rowSet;
-    }
     // get the OperationLog object from the operation
     OperationLog operationLog = getOperation(opHandle).getOperationLog();
     if (operationLog == null) {
       throw new HiveSQLException("Couldn't find log associated with operation handle: " + opHandle);
     }
-
 
     // read logs
     List<String> logs;
@@ -289,6 +239,8 @@ public class OperationManager extends AbstractService {
 
 
     // convert logs to RowSet
+    TableSchema tableSchema = new TableSchema(getLogSchema());
+    RowSet rowSet = RowSetFactory.create(tableSchema, getOperation(opHandle).getProtocolVersion());
     for (String log : logs) {
       rowSet.addRow(new String[] {log});
     }

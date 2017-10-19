@@ -37,6 +37,8 @@ import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.HConnection;
+import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.mapred.TableOutputFormat;
 import org.apache.hadoop.hbase.mapreduce.TableInputFormatBase;
@@ -65,6 +67,7 @@ import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.SerDe;
 import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.hbase.security.token.TokenUtil;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.OutputFormat;
@@ -72,6 +75,8 @@ import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.zookeeper.KeeperException;
+
+import com.yammer.metrics.core.MetricsRegistry;
 
 /**
  * HBaseStorageHandler provides a HiveStorageHandler implementation for
@@ -377,6 +382,7 @@ public class HBaseStorageHandler extends DefaultStorageHandler
     // do this for reconciling HBaseStorageHandler for use in HCatalog
     // check to see if this an input job or an outputjob
     if (this.configureInputJobProps) {
+      LOG.info("Configuring input job properties");
       String snapshotName = HiveConf.getVar(jobConf, HiveConf.ConfVars.HIVE_HBASE_SNAPSHOT_NAME);
       if (snapshotName != null) {
         HBaseTableSnapshotInputFormatUtil.assertSupportsTableSnapshots();
@@ -425,6 +431,7 @@ public class HBaseStorageHandler extends DefaultStorageHandler
       } //input job properties
     }
     else {
+      LOG.info("Configuring output job properties");
       if (isHBaseGenerateHFiles(jobConf)) {
         // only support bulkload when a hfile.family.path has been specified.
         // TODO: support detecting cf's from column mapping
@@ -468,35 +475,17 @@ public class HBaseStorageHandler extends DefaultStorageHandler
 
   private void addHBaseDelegationToken(Configuration conf) throws IOException {
     if (User.isHBaseSecurityEnabled(conf)) {
+      HConnection conn = HConnectionManager.createConnection(conf);
       try {
         User curUser = User.getCurrent();
-        Token<AuthenticationTokenIdentifier> authToken = getAuthToken(conf, curUser);
         Job job = new Job(conf);
-        if (authToken == null) {
-          curUser.obtainAuthTokenForJob(conf,job);
-        } else {
-          job.getCredentials().addToken(authToken.getService(), authToken);
-        }
+        TokenUtil.addTokenForJob(conn, curUser, job);
       } catch (InterruptedException e) {
         throw new IOException("Error while obtaining hbase delegation token", e);
       }
-    }
-  }
-
-  /**
-   * Get the authentication token of the user for the cluster specified in the configuration
-   * @return null if the user does not have the token, otherwise the auth token for the cluster.
-   */
-  private static Token<AuthenticationTokenIdentifier> getAuthToken(Configuration conf, User user)
-      throws IOException, InterruptedException {
-    ZooKeeperWatcher zkw = new ZooKeeperWatcher(conf, "mr-init-credentials", null);
-    try {
-      String clusterId = ZKClusterId.readClusterIdZNode(zkw);
-      return new AuthenticationTokenSelector().selectToken(new Text(clusterId), user.getUGI().getTokens());
-    } catch (KeeperException e) {
-      throw new IOException(e);
-    } finally {
-      zkw.close();
+      finally {
+        conn.close();
+      }
     }
   }
 
@@ -524,6 +513,10 @@ public class HBaseStorageHandler extends DefaultStorageHandler
       } else {
         TableMapReduceUtil.addDependencyJars(
           jobConf, HBaseStorageHandler.class, TableInputFormatBase.class);
+      }
+      if (HiveConf.getVar(jobConf, HiveConf.ConfVars.HIVE_HBASE_SNAPSHOT_NAME) != null) {
+        // There is an extra dependency on MetricsRegistry for snapshot IF.
+        TableMapReduceUtil.addDependencyJars(jobConf, MetricsRegistry.class);
       }
       Set<String> merged = new LinkedHashSet<String>(jobConf.getStringCollection("tmpjars"));
 

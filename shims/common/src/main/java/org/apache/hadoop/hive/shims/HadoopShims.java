@@ -28,11 +28,13 @@ import java.security.PrivilegedExceptionAction;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 import javax.security.auth.login.LoginException;
 
 import com.google.common.annotations.VisibleForTesting;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -45,6 +47,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.hive.shims.HadoopShims.StoragePolicyValue;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.mapred.ClusterStatus;
 import org.apache.hadoop.mapred.JobConf;
@@ -60,6 +63,7 @@ import org.apache.hadoop.mapreduce.OutputFormat;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.TaskID;
+import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.Progressable;
 
@@ -141,6 +145,8 @@ public interface HadoopShims {
   public TaskAttemptID newTaskAttemptID(JobID jobId, boolean isMap, int taskId, int id);
 
   public JobContext newJobContext(Job job);
+
+  public void startPauseMonitor(Configuration conf);
 
   /**
    * Check wether MR is configured to run in local-mode
@@ -389,6 +395,11 @@ public interface HadoopShims {
      * given timestamp.
      */
     public void killJobs(String tag, long timestamp);
+    /**
+     * Returns all jobs tagged with the given tag that have been started after the
+     * given timestamp. Returned jobIds are MapReduce JobIds.
+     */
+    public Set<String> getJobs(String tag, long timestamp);
   }
 
   /**
@@ -398,6 +409,33 @@ public interface HadoopShims {
   public FileSystem createProxyFileSystem(FileSystem fs, URI uri);
 
   public Map<String, String> getHadoopConfNames();
+  
+  /**
+   * Create a shim for DFS storage policy.
+   */
+  
+  public enum StoragePolicyValue {
+    MEMORY, /* 1-replica memory */
+    SSD, /* 3-replica ssd */
+    DEFAULT /* system defaults (usually 3-replica disk) */;
+
+    public static StoragePolicyValue lookup(String name) {
+      if (name == null) {
+        return DEFAULT;
+      }
+      return StoragePolicyValue.valueOf(name.toUpperCase().trim());
+    }
+  };
+  
+  public interface StoragePolicyShim {
+    void setStoragePolicy(Path path, StoragePolicyValue policy) throws IOException;
+  }
+  
+  /**
+   *  obtain a storage policy shim associated with the filesystem.
+   *  Returns null when the filesystem has no storage policies.
+   */
+  public StoragePolicyShim getStoragePolicyShim(FileSystem fs);
 
   /**
    * a hadoop.io ByteBufferPool shim.
@@ -677,4 +715,22 @@ public interface HadoopShims {
   public HdfsEncryptionShim createHdfsEncryptionShim(FileSystem fs, Configuration conf) throws IOException;
 
   public Path getPathWithoutSchemeAndAuthority(Path path);
+
+  /**
+   * Reads data into ByteBuffer.
+   * @param file File.
+   * @param dest Buffer.
+   * @return Number of bytes read, just like file.read. If any bytes were read, dest position
+   *         will be set to old position + number of bytes read.
+   */
+  int readByteBuffer(FSDataInputStream file, ByteBuffer dest) throws IOException;
+
+  /**
+   * Get Delegation token and add it to Credential.
+   * @param fs FileSystem object to HDFS
+   * @param cred Credentials object to add the token to.
+   * @param uname user name.
+   * @throws IOException If an error occurred on adding the token.
+   */
+  public void addDelegationTokens(FileSystem fs, Credentials cred, String uname) throws IOException;
 }

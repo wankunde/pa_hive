@@ -26,27 +26,27 @@ create table inputTbl1(key string, val string) stored as textfile
 POSTHOOK: type: CREATETABLE
 POSTHOOK: Output: database:default
 POSTHOOK: Output: default@inputTbl1
-PREHOOK: query: create table outputTbl1(key string, values bigint) partitioned by (ds string) stored as textfile
+PREHOOK: query: create table outputTbl1(key string, `values` bigint) partitioned by (ds string) stored as textfile
 PREHOOK: type: CREATETABLE
 PREHOOK: Output: database:default
 PREHOOK: Output: default@outputTbl1
-POSTHOOK: query: create table outputTbl1(key string, values bigint) partitioned by (ds string) stored as textfile
+POSTHOOK: query: create table outputTbl1(key string, `values` bigint) partitioned by (ds string) stored as textfile
 POSTHOOK: type: CREATETABLE
 POSTHOOK: Output: database:default
 POSTHOOK: Output: default@outputTbl1
-PREHOOK: query: create table outputTbl2(key string, values bigint) partitioned by (ds string) stored as textfile
+PREHOOK: query: create table outputTbl2(key string, `values` bigint) partitioned by (ds string) stored as textfile
 PREHOOK: type: CREATETABLE
 PREHOOK: Output: database:default
 PREHOOK: Output: default@outputTbl2
-POSTHOOK: query: create table outputTbl2(key string, values bigint) partitioned by (ds string) stored as textfile
+POSTHOOK: query: create table outputTbl2(key string, `values` bigint) partitioned by (ds string) stored as textfile
 POSTHOOK: type: CREATETABLE
 POSTHOOK: Output: database:default
 POSTHOOK: Output: default@outputTbl2
-PREHOOK: query: create table outputTbl3(key string, values bigint) partitioned by (ds string,hr string) stored as textfile
+PREHOOK: query: create table outputTbl3(key string, `values` bigint) partitioned by (ds string,hr string) stored as textfile
 PREHOOK: type: CREATETABLE
 PREHOOK: Output: database:default
 PREHOOK: Output: default@outputTbl3
-POSTHOOK: query: create table outputTbl3(key string, values bigint) partitioned by (ds string,hr string) stored as textfile
+POSTHOOK: query: create table outputTbl3(key string, `values` bigint) partitioned by (ds string,hr string) stored as textfile
 POSTHOOK: type: CREATETABLE
 POSTHOOK: Output: database:default
 POSTHOOK: Output: default@outputTbl3
@@ -62,18 +62,18 @@ PREHOOK: query: explain
 insert overwrite table outputTbl1 partition(ds='2004')
 SELECT *
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 PREHOOK: type: QUERY
 POSTHOOK: query: explain
 insert overwrite table outputTbl1 partition(ds='2004')
 SELECT *
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
@@ -92,43 +92,43 @@ STAGE PLANS:
             Map Operator Tree:
                 TableScan
                   alias: inputtbl1
-                  Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
                     expressions: key (type: string)
                     outputColumnNames: key
-                    Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+                    Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                     Group By Operator
                       aggregations: count(1)
                       keys: key (type: string)
                       mode: hash
                       outputColumnNames: _col0, _col1
-                      Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                      Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                       Reduce Output Operator
                         key expressions: _col0 (type: string)
                         sort order: +
                         Map-reduce partition columns: _col0 (type: string)
-                        Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                        Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                         value expressions: _col1 (type: bigint)
         Map 3 
             Map Operator Tree:
                 TableScan
                   alias: inputtbl1
-                  Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
                     expressions: key (type: string)
                     outputColumnNames: key
-                    Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+                    Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                     Group By Operator
                       aggregations: count(1)
                       keys: key (type: string)
                       mode: hash
                       outputColumnNames: _col0, _col1
-                      Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                      Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                       Reduce Output Operator
                         key expressions: _col0 (type: string)
                         sort order: +
                         Map-reduce partition columns: _col0 (type: string)
-                        Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                        Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                         value expressions: _col1 (type: bigint)
         Reducer 2 
             Reduce Operator Tree:
@@ -137,8 +137,10 @@ STAGE PLANS:
                 keys: KEY._col0 (type: string)
                 mode: mergepartial
                 outputColumnNames: _col0, _col1
+                Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                 File Output Operator
                   compressed: false
+                  Statistics: Num rows: 2 Data size: 60 Basic stats: COMPLETE Column stats: NONE
                   table:
                       input format: org.apache.hadoop.mapred.TextInputFormat
                       output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -151,8 +153,10 @@ STAGE PLANS:
                 keys: KEY._col0 (type: string)
                 mode: mergepartial
                 outputColumnNames: _col0, _col1
+                Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                 File Output Operator
                   compressed: false
+                  Statistics: Num rows: 2 Data size: 60 Basic stats: COMPLETE Column stats: NONE
                   table:
                       input format: org.apache.hadoop.mapred.TextInputFormat
                       output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -174,9 +178,9 @@ STAGE PLANS:
 PREHOOK: query: insert overwrite table outputTbl1 partition(ds='2004')
 SELECT *
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 PREHOOK: type: QUERY
 PREHOOK: Input: default@inputtbl1
@@ -184,15 +188,15 @@ PREHOOK: Output: default@outputtbl1@ds=2004
 POSTHOOK: query: insert overwrite table outputTbl1 partition(ds='2004')
 SELECT *
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@inputtbl1
 POSTHOOK: Output: default@outputtbl1@ds=2004
-POSTHOOK: Lineage: outputtbl1 PARTITION(ds=2004).key EXPRESSION [(inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), ]
-POSTHOOK: Lineage: outputtbl1 PARTITION(ds=2004).values EXPRESSION [(inputtbl1)inputtbl1.null, ]
+POSTHOOK: Lineage: outputtbl1 PARTITION(ds=2004).key EXPRESSION [(inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), (inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), ]
+POSTHOOK: Lineage: outputtbl1 PARTITION(ds=2004).values EXPRESSION [(inputtbl1)inputtbl1.null, (inputtbl1)inputtbl1.null, ]
 PREHOOK: query: desc formatted outputTbl1 partition(ds='2004')
 PREHOOK: type: DESCTABLE
 PREHOOK: Input: default@outputtbl1
@@ -234,12 +238,12 @@ Bucket Columns:     	[]
 Sort Columns:       	[]                  	 
 Storage Desc Params:	 	 
 	serialization.format	1                   
-PREHOOK: query: select * from outputTbl1 order by key, values
+PREHOOK: query: select * from outputTbl1 order by key, `values`
 PREHOOK: type: QUERY
 PREHOOK: Input: default@outputtbl1
 PREHOOK: Input: default@outputtbl1@ds=2004
 #### A masked pattern was here ####
-POSTHOOK: query: select * from outputTbl1 order by key, values
+POSTHOOK: query: select * from outputTbl1 order by key, `values`
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@outputtbl1
 POSTHOOK: Input: default@outputtbl1@ds=2004
@@ -258,18 +262,18 @@ PREHOOK: query: explain
 insert overwrite table outputTbl2 partition(ds)
 SELECT *
 FROM (
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)a
   UNION ALL
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)b
 ) a
 PREHOOK: type: QUERY
 POSTHOOK: query: explain 
 insert overwrite table outputTbl2 partition(ds)
 SELECT *
 FROM (
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)a
   UNION ALL
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)b
 ) a
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
@@ -321,13 +325,17 @@ STAGE PLANS:
               Select Operator
                 expressions: VALUE._col0 (type: string), VALUE._col1 (type: string)
                 outputColumnNames: _col0, _col1
+                Statistics: Num rows: 500 Data size: 5000 Basic stats: COMPLETE Column stats: NONE
                 Limit
                   Number of rows: 500
+                  Statistics: Num rows: 500 Data size: 5000 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
                     expressions: _col0 (type: string), UDFToLong(_col1) (type: bigint), '2008-04-08' (type: string)
                     outputColumnNames: _col0, _col1, _col2
+                    Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                     File Output Operator
                       compressed: false
+                      Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                       table:
                           input format: org.apache.hadoop.mapred.TextInputFormat
                           output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -338,13 +346,17 @@ STAGE PLANS:
               Select Operator
                 expressions: VALUE._col0 (type: string), VALUE._col1 (type: string)
                 outputColumnNames: _col0, _col1
+                Statistics: Num rows: 500 Data size: 5000 Basic stats: COMPLETE Column stats: NONE
                 Limit
                   Number of rows: 500
+                  Statistics: Num rows: 500 Data size: 5000 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
                     expressions: _col0 (type: string), UDFToLong(_col1) (type: bigint), '2008-04-08' (type: string)
                     outputColumnNames: _col0, _col1, _col2
+                    Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                     File Output Operator
                       compressed: false
+                      Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                       table:
                           input format: org.apache.hadoop.mapred.TextInputFormat
                           output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -366,9 +378,9 @@ STAGE PLANS:
 PREHOOK: query: insert overwrite table outputTbl2 partition(ds)
 SELECT *
 FROM (
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)a
   UNION ALL
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)b
 ) a
 PREHOOK: type: QUERY
 PREHOOK: Input: default@srcpart
@@ -378,17 +390,17 @@ PREHOOK: Output: default@outputtbl2
 POSTHOOK: query: insert overwrite table outputTbl2 partition(ds)
 SELECT *
 FROM (
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)a
   UNION ALL
-  SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500
+  select * from (SELECT key, value, ds from srcpart where ds='2008-04-08' limit 500)b
 ) a
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@srcpart
 POSTHOOK: Input: default@srcpart@ds=2008-04-08/hr=11
 POSTHOOK: Input: default@srcpart@ds=2008-04-08/hr=12
 POSTHOOK: Output: default@outputtbl2@ds=2008-04-08
-POSTHOOK: Lineage: outputtbl2 PARTITION(ds=2008-04-08).key EXPRESSION [(srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), ]
-POSTHOOK: Lineage: outputtbl2 PARTITION(ds=2008-04-08).values EXPRESSION [(srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), ]
+POSTHOOK: Lineage: outputtbl2 PARTITION(ds=2008-04-08).key EXPRESSION [(srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), (srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), ]
+POSTHOOK: Lineage: outputtbl2 PARTITION(ds=2008-04-08).values EXPRESSION [(srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), (srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), ]
 PREHOOK: query: show partitions outputTbl2
 PREHOOK: type: SHOWPARTITIONS
 PREHOOK: Input: default@outputtbl2
@@ -440,17 +452,17 @@ Storage Desc Params:
 PREHOOK: query: explain insert overwrite table outputTbl3 partition(ds, hr)
 SELECT *
 FROM (
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)a
   UNION ALL
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)b
 ) a
 PREHOOK: type: QUERY
 POSTHOOK: query: explain insert overwrite table outputTbl3 partition(ds, hr)
 SELECT *
 FROM (
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)a
   UNION ALL
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)b
 ) a
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
@@ -502,13 +514,17 @@ STAGE PLANS:
               Select Operator
                 expressions: VALUE._col0 (type: string), VALUE._col1 (type: string), VALUE._col3 (type: string)
                 outputColumnNames: _col0, _col1, _col3
+                Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                 Limit
                   Number of rows: 1000
+                  Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
                     expressions: _col0 (type: string), UDFToLong(_col1) (type: bigint), '2008-04-08' (type: string), _col3 (type: string)
                     outputColumnNames: _col0, _col1, _col2, _col3
+                    Statistics: Num rows: 2000 Data size: 20000 Basic stats: COMPLETE Column stats: NONE
                     File Output Operator
                       compressed: false
+                      Statistics: Num rows: 2000 Data size: 20000 Basic stats: COMPLETE Column stats: NONE
                       table:
                           input format: org.apache.hadoop.mapred.TextInputFormat
                           output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -519,13 +535,17 @@ STAGE PLANS:
               Select Operator
                 expressions: VALUE._col0 (type: string), VALUE._col1 (type: string), VALUE._col3 (type: string)
                 outputColumnNames: _col0, _col1, _col3
+                Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                 Limit
                   Number of rows: 1000
+                  Statistics: Num rows: 1000 Data size: 10000 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
                     expressions: _col0 (type: string), UDFToLong(_col1) (type: bigint), '2008-04-08' (type: string), _col3 (type: string)
                     outputColumnNames: _col0, _col1, _col2, _col3
+                    Statistics: Num rows: 2000 Data size: 20000 Basic stats: COMPLETE Column stats: NONE
                     File Output Operator
                       compressed: false
+                      Statistics: Num rows: 2000 Data size: 20000 Basic stats: COMPLETE Column stats: NONE
                       table:
                           input format: org.apache.hadoop.mapred.TextInputFormat
                           output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -548,9 +568,9 @@ STAGE PLANS:
 PREHOOK: query: insert overwrite table outputTbl3 partition(ds, hr)
 SELECT *
 FROM (
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)a
   UNION ALL
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)b
 ) a
 PREHOOK: type: QUERY
 PREHOOK: Input: default@srcpart
@@ -560,9 +580,9 @@ PREHOOK: Output: default@outputtbl3
 POSTHOOK: query: insert overwrite table outputTbl3 partition(ds, hr)
 SELECT *
 FROM (
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)a
   UNION ALL
-  SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000
+  select * from (SELECT key, value, ds, hr from srcpart where ds='2008-04-08' limit 1000)b
 ) a
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@srcpart
@@ -570,10 +590,10 @@ POSTHOOK: Input: default@srcpart@ds=2008-04-08/hr=11
 POSTHOOK: Input: default@srcpart@ds=2008-04-08/hr=12
 POSTHOOK: Output: default@outputtbl3@ds=2008-04-08/hr=11
 POSTHOOK: Output: default@outputtbl3@ds=2008-04-08/hr=12
-POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=11).key EXPRESSION [(srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), ]
-POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=11).values EXPRESSION [(srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), ]
-POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=12).key EXPRESSION [(srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), ]
-POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=12).values EXPRESSION [(srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), ]
+POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=11).key EXPRESSION [(srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), (srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), ]
+POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=11).values EXPRESSION [(srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), (srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), ]
+POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=12).key EXPRESSION [(srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), (srcpart)srcpart.FieldSchema(name:key, type:string, comment:default), ]
+POSTHOOK: Lineage: outputtbl3 PARTITION(ds=2008-04-08,hr=12).values EXPRESSION [(srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), (srcpart)srcpart.FieldSchema(name:value, type:string, comment:default), ]
 PREHOOK: query: show partitions outputTbl3
 PREHOOK: type: SHOWPARTITIONS
 PREHOOK: Input: default@outputtbl3

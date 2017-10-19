@@ -20,11 +20,14 @@ package org.apache.hadoop.hive.ql.exec;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Future;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -36,8 +39,9 @@ import org.apache.hadoop.hive.ql.exec.tez.ReduceRecordSource;
 import org.apache.hadoop.hive.ql.exec.tez.TezContext;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.plan.CommonMergeJoinDesc;
-import org.apache.hadoop.hive.ql.plan.OperatorDesc;
+import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
 import org.apache.hadoop.hive.ql.plan.JoinCondDesc;
+import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.hive.ql.plan.api.OperatorType;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorUtils;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorUtils.ObjectInspectorCopyOption;
@@ -80,6 +84,8 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
   transient List<Object> otherKey = null;
   transient List<Object> values = null;
   transient RecordSource[] sources;
+  transient WritableComparator[][] keyComparators;
+
   transient List<Operator<? extends OperatorDesc>> originalParents =
       new ArrayList<Operator<? extends OperatorDesc>>();
   transient Set<Integer> fetchInputAtClose;
@@ -90,10 +96,9 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
 
   @SuppressWarnings("unchecked")
   @Override
-  public void initializeOp(Configuration hconf) throws HiveException {
-    super.initializeOp(hconf);
+  public Collection<Future<?>> initializeOp(Configuration hconf) throws HiveException {
+    Collection<Future<?>> result = super.initializeOp(hconf);
     firstFetchHappened = false;
-    initializeChildren(hconf);
     fetchInputAtClose = getFetchInputAtCloseList();
 
     int maxAlias = 0;
@@ -110,6 +115,11 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
     nextKeyWritables = new ArrayList[maxAlias];
     fetchDone = new boolean[maxAlias];
     foundNextKeyGroup = new boolean[maxAlias];
+    keyComparators = new WritableComparator[maxAlias][];
+
+    for (Entry<Byte, List<ExprNodeDesc>> entry : conf.getKeys().entrySet()) {
+      keyComparators[entry.getKey().intValue()] = new WritableComparator[entry.getValue().size()];
+    }
 
     int bucketSize;
 
@@ -139,6 +149,26 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
     }
 
     sources = ((TezContext) MapredContext.get()).getRecordSources();
+    return result;
+  }
+
+  /*
+   * In case of outer joins, we need to push records through even if one of the sides is done
+   * sending records. For e.g. In the case of full outer join, the right side needs to send in data
+   * for the join even after the left side has completed sending all the records on its side. This
+   * can be done once at initialize time and at close, these tags will still forward records until
+   * they have no more to send. Also, subsequent joins need to fetch their data as well since
+   * any join following the outer join could produce results with one of the outer sides depending on
+   * the join condition. We could optimize for the case of inner joins in the future here.
+   */
+  private Set<Integer> getFetchInputAtCloseList() {
+    Set<Integer> retval = new TreeSet<Integer>();
+    for (JoinCondDesc joinCondDesc : conf.getConds()) {
+      retval.add(joinCondDesc.getLeft());
+      retval.add(joinCondDesc.getRight());
+    }
+
+    return retval;
   }
 
   @Override
@@ -162,7 +192,7 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
    * push but the rest is pulled until we run out of records.
    */
   @Override
-  public void processOp(Object row, int tag) throws HiveException {
+  public void process(Object row, int tag) throws HiveException {
     posBigTable = (byte) conf.getBigTablePosition();
 
     byte alias = (byte) tag;
@@ -180,6 +210,33 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
       foundNextKeyGroup[tag] = true;
       if (tag != posBigTable) {
         return;
+      }
+    } else {
+      if ((tag == posBigTable) && (candidateStorage[tag].rowCount() == joinEmitInterval)) {
+        boolean canEmit = true;
+        for (byte i = 0; i < foundNextKeyGroup.length; i++) {
+          if (i == posBigTable) {
+            continue;
+          }
+
+          if (foundNextKeyGroup[i] == false) {
+            canEmit = false;
+            break;
+          }
+
+          if (compareKeys(i, key, keyWritables[i]) != 0) {
+            canEmit = false;
+            break;
+          }
+        }
+        // we can save ourselves from spilling once we have join emit interval worth of rows.
+        if (canEmit) {
+          LOG.info("We are emitting rows since we hit the join emit interval of "
+              + joinEmitInterval);
+          joinOneGroup(false);
+          candidateStorage[tag].clearRows();
+          storage[tag].clearRows();
+        }
       }
     }
 
@@ -206,11 +263,15 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
   }
 
   private List<Byte> joinOneGroup() throws HiveException {
+    return joinOneGroup(true);
+  }
+
+  private List<Byte> joinOneGroup(boolean clear) throws HiveException {
     int[] smallestPos = findSmallestKey();
     List<Byte> listOfNeedFetchNext = null;
     if (smallestPos != null) {
-      listOfNeedFetchNext = joinObject(smallestPos);
-      if (listOfNeedFetchNext.size() > 0) {
+      listOfNeedFetchNext = joinObject(smallestPos, clear);
+      if ((listOfNeedFetchNext.size() > 0) && clear) {
         // listOfNeedFetchNext contains all tables that we have joined data in their
         // candidateStorage, and we need to clear candidate storage and promote their
         // nextGroupStorage to candidateStorage and fetch data until we reach a
@@ -227,7 +288,7 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
     return listOfNeedFetchNext;
   }
 
-  private List<Byte> joinObject(int[] smallestPos) throws HiveException {
+  private List<Byte> joinObject(int[] smallestPos, boolean clear) throws HiveException {
     List<Byte> needFetchList = new ArrayList<Byte>();
     byte index = (byte) (smallestPos.length - 1);
     for (; index >= 0; index--) {
@@ -236,7 +297,9 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
         continue;
       }
       storage[index] = candidateStorage[index];
-      needFetchList.add(index);
+      if (clear) {
+        needFetchList.add(index);
+      }
       if (smallestPos[index] < 0) {
         break;
       }
@@ -245,9 +308,11 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
       putDummyOrEmpty(index);
     }
     checkAndGenObject();
-    for (Byte pos : needFetchList) {
-      this.candidateStorage[pos].clearRows();
-      this.keyWritables[pos] = null;
+    if (clear) {
+      for (Byte pos : needFetchList) {
+        this.candidateStorage[pos].clearRows();
+        this.keyWritables[pos] = null;
+      }
     }
     return needFetchList;
   }
@@ -275,7 +340,7 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
         result[pos] = -1;
         continue;
       }
-      result[pos] = compareKeys(key, smallestOne);
+      result[pos] = compareKeys(pos, key, smallestOne);
       if (result[pos] < 0) {
         smallestOne = key;
       }
@@ -336,7 +401,7 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
       if (fetchDone[tag] && hasMore) {
         LOG.warn("fetchDone[" + tag + "] was set to true (by a recursive call) and will be reset");
       }// TODO: "else {"? This happened in the past due to a bug, see HIVE-11016.
-      fetchDone[tag] = !hasMore;
+        fetchDone[tag] = !hasMore;
       if (sources[tag].isGrouped()) {
         // instead of maintaining complex state for the fetch of the next group,
         // we know for sure that at the end of all the values for a given key,
@@ -346,25 +411,6 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
     } catch (Exception e) {
       throw new HiveException(e);
     }
-  }
-
-  /*
-  * In case of outer joins, we need to push records through even if one of the sides is done
-  * sending records. For e.g. In the case of full outer join, the right side needs to send in data
-  * for the join even after the left side has completed sending all the records on its side. This
-  * can be done once at initialize time and at close, these tags will still forward records until
-  * they have no more to send. Also, subsequent joins need to fetch their data as well since
-  * any join following the outer join could produce results with one of the outer sides depending on
-  * the join condition. We could optimize for the case of inner joins in the future here.
-  */
-  private Set<Integer> getFetchInputAtCloseList() {
-    Set<Integer> retval = new TreeSet<Integer>();
-    for (JoinCondDesc joinCondDesc : conf.getConds()) {
-      retval.add(joinCondDesc.getLeft());
-      retval.add(joinCondDesc.getRight());
-    }
-
-    return retval;
   }
 
   private void joinFinalLeftData() throws HiveException {
@@ -392,14 +438,16 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
       // firstFetchHappened == true. In reality it almost always calls joinOneGroup. Fix it?
       int lastPos = (fetchDone.length - 1);
       if (posBigTable != lastPos
-              && (fetchInputAtClose.contains(lastPos)) && (fetchDone[lastPos] == false)) {
+          && (fetchInputAtClose.contains(lastPos)) && (fetchDone[lastPos] == false)) {
         // Do the join. It does fetching of next row groups itself.
         LOG.debug("Calling joinOneGroup once again");
         ret = joinOneGroup();
       }
+
       if (ret == null || ret.size() == 0) {
         break;
       }
+
       reportProgress();
       numMapRowsRead++;
       allFetchDone = allFetchDone();
@@ -409,7 +457,7 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
     while (dataInCache) {
       for (byte pos = 0; pos < order.length; pos++) {
         if (this.foundNextKeyGroup[pos] && this.nextKeyWritables[pos] != null) {
-          fetchNextGroup(pos);
+          promoteNextGroupToCandidate(pos);
         }
       }
       joinOneGroup();
@@ -418,7 +466,7 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
         if (candidateStorage[pos] == null) {
           continue;
         }
-        if (this.candidateStorage[pos].rowCount() > 0) {
+        if (this.candidateStorage[pos].hasRows()) {
           dataInCache = true;
           break;
         }
@@ -457,9 +505,10 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
     if (keyWritable == null) {
       // the first group.
       keyWritables[alias] = key;
+      keyComparators[alias] = new WritableComparator[key.size()];
       return false;
     } else {
-      int cmp = compareKeys(key, keyWritable);
+      int cmp = compareKeys(alias, key, keyWritable);
       if (cmp != 0) {
         nextKeyWritables[alias] = key;
         return true;
@@ -469,35 +518,71 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
   }
 
   @SuppressWarnings("rawtypes")
-  private int compareKeys(List<Object> k1, List<Object> k2) {
-    int ret = 0;
+  private int compareKeys(byte alias, List<Object> k1, List<Object> k2) {
+    final WritableComparator[] comparators = keyComparators[alias];
 
     // join keys have difference sizes?
-    ret = k1.size() - k2.size();
-    if (ret != 0) {
-      return ret;
+    if (k1.size() != k2.size()) {
+      return k1.size() - k2.size();
     }
 
-    for (int i = 0; i < k1.size(); i++) {
+    if (comparators.length == 0) {
+      // cross-product - no keys really
+      return 0;
+    }
+
+    if (comparators.length > 1) {
+      // rare case
+      return compareKeysMany(comparators, k1, k2);
+    } else {
+      return compareKey(comparators, 0,
+          (WritableComparable) k1.get(0),
+          (WritableComparable) k2.get(0),
+          nullsafes != null ? nullsafes[0]: false);
+    }
+  }
+
+  @SuppressWarnings("rawtypes")
+  private int compareKeysMany(WritableComparator[] comparators,
+      final List<Object> k1,
+      final List<Object> k2) {
+    // invariant: k1.size == k2.size
+    int ret = 0;
+    final int size = k1.size();
+    for (int i = 0; i < size; i++) {
       WritableComparable key_1 = (WritableComparable) k1.get(i);
       WritableComparable key_2 = (WritableComparable) k2.get(i);
-      if (key_1 == null && key_2 == null) {
-        if (nullsafes != null && nullsafes[i]) {
-          continue;
-        } else {
-          return -1;
-        }
-      } else if (key_1 == null) {
-        return -1;
-      } else if (key_2 == null) {
-        return 1;
-      }
-      ret = WritableComparator.get(key_1.getClass()).compare(key_1, key_2);
+      ret = compareKey(comparators, i, key_1, key_2,
+          nullsafes != null ? nullsafes[i] : false);
       if (ret != 0) {
         return ret;
       }
     }
     return ret;
+  }
+
+  @SuppressWarnings("rawtypes")
+  private int compareKey(final WritableComparator comparators[], final int pos,
+      final WritableComparable key_1,
+      final WritableComparable key_2,
+      final boolean nullsafe) {
+
+    if (key_1 == null && key_2 == null) {
+      if (nullsafe) {
+        return 0;
+      } else {
+        return -1;
+      }
+    } else if (key_1 == null) {
+      return -1;
+    } else if (key_2 == null) {
+      return 1;
+    }
+
+    if (comparators[pos] == null) {
+      comparators[pos] = WritableComparator.get(key_1.getClass());
+    }
+    return comparators[pos].compare(key_1, key_2);
   }
 
   @SuppressWarnings("unchecked")
@@ -542,10 +627,14 @@ public class CommonMergeJoinOperator extends AbstractMapJoinOperator<CommonMerge
     if (parent == null) {
       throw new HiveException("No valid parents.");
     }
-    Map<Integer, DummyStoreOperator> dummyOps = parent.getTagToOperatorTree();
+    Map<Integer, DummyStoreOperator> dummyOps =
+        ((TezContext) (MapredContext.get())).getDummyOpsMap();
     for (Entry<Integer, DummyStoreOperator> connectOp : dummyOps.entrySet()) {
-      parentOperators.add(connectOp.getKey(), connectOp.getValue());
-      connectOp.getValue().getChildOperators().add(this);
+      if (connectOp.getValue().getChildOperators() == null
+          || connectOp.getValue().getChildOperators().isEmpty()) {
+        parentOperators.add(connectOp.getKey(), connectOp.getValue());
+        connectOp.getValue().getChildOperators().add(this);
+      }
     }
     super.initializeLocalWork(hconf);
     return;

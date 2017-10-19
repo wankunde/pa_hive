@@ -24,17 +24,15 @@ import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.security.auth.login.LoginException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.hive.common.metrics.common.Metrics;
-import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
-import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.shims.HadoopShims.KerberosNameShim;
+import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hive.service.AbstractService;
 import org.apache.hive.service.ServiceException;
 import org.apache.hive.service.ServiceUtils;
@@ -71,7 +69,6 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
   protected CLIService cliService;
   private static final TStatus OK_STATUS = new TStatus(TStatusCode.SUCCESS_STATUS);
   protected static HiveAuthFactory hiveAuthFactory;
-  private static final AtomicInteger sessionCount = new AtomicInteger();
 
   protected int portNum;
   protected InetAddress serverIPAddress;
@@ -111,29 +108,13 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
       @Override
       public ServerContext createContext(
           TProtocol input, TProtocol output) {
-        Metrics metrics = MetricsFactory.getInstance();
-        if (metrics != null) {
-          try {
-            metrics.incrementCounter(MetricsConstant.OPEN_CONNECTIONS);
-          } catch (Exception e) {
-            LOG.warn("Error Reporting JDO operation to Metrics system", e);
-          }
-        }
         return new ThriftCLIServerContext();
       }
 
       @Override
       public void deleteContext(ServerContext serverContext,
           TProtocol input, TProtocol output) {
-        Metrics metrics = MetricsFactory.getInstance();
-        if (metrics != null) {
-          try {
-            metrics.decrementCounter(MetricsConstant.OPEN_CONNECTIONS);
-          } catch (Exception e) {
-            LOG.warn("Error Reporting JDO operation to Metrics system", e);
-          }
-        }
-        ThriftCLIServerContext context = (ThriftCLIServerContext) serverContext;
+        ThriftCLIServerContext context = (ThriftCLIServerContext)serverContext;
         SessionHandle sessionHandle = context.getSessionHandle();
         if (sessionHandle != null) {
           LOG.info("Session disconnected without closing properly, close it now");
@@ -325,7 +306,6 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
       if (context != null) {
         context.setSessionHandle(sessionHandle);
       }
-      LOG.info("Opened a session, current sessions: " + sessionCount.incrementAndGet());
     } catch (Exception e) {
       LOG.warn("Error opening session: ", e);
       resp.setStatus(HiveSQLException.toTStatus(e));
@@ -365,7 +345,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
    * @return
    * @throws HiveSQLException
    */
-  private String getUserName(TOpenSessionReq req) throws HiveSQLException {
+  private String getUserName(TOpenSessionReq req) throws HiveSQLException, IOException {
     String userName = null;
     // Kerberos
     if (isKerberosAuthMode()) {
@@ -391,12 +371,12 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
     return effectiveClientUser;
   }
 
-  private String getShortName(String userName) {
+  private String getShortName(String userName) throws IOException {
     String ret = null;
+
     if (userName != null) {
-      int indexOfDomainMatch = ServiceUtils.indexOfDomainMatch(userName);
-      ret = (indexOfDomainMatch <= 0) ? userName :
-          userName.substring(0, indexOfDomainMatch);
+      KerberosNameShim fullKerberosName = ShimLoader.getHadoopShims().getKerberosNameShim(userName);
+      ret = fullKerberosName.getShortName();
     }
 
     return ret;
@@ -468,7 +448,6 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
     try {
       SessionHandle sessionHandle = new SessionHandle(req.getSessionHandle());
       cliService.closeSession(sessionHandle);
-      LOG.info("Closed a session, current sessions: " + sessionCount.decrementAndGet());
       resp.setStatus(OK_STATUS);
       ThriftCLIServerContext context =
         (ThriftCLIServerContext)currentServerContext.get();

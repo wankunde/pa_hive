@@ -18,9 +18,7 @@
  */
 package org.apache.hive.hcatalog.templeton.tool;
 
-import java.io.File;
 import java.io.IOException;
-import java.net.URI;
 import java.security.PrivilegedExceptionAction;
 import java.util.Arrays;
 
@@ -28,13 +26,9 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.conf.HiveConf;
-import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
-import org.apache.hadoop.hive.shims.ShimLoader;
+import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.JobClient;
@@ -46,8 +40,8 @@ import org.apache.hadoop.mapreduce.security.token.delegation.DelegationTokenIden
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.Tool;
+import org.apache.hive.hcatalog.common.HCatUtil;
 import org.apache.hive.hcatalog.templeton.AppConfig;
-import org.apache.hive.hcatalog.templeton.Main;
 import org.apache.hive.hcatalog.templeton.SecureProxySupport;
 import org.apache.hive.hcatalog.templeton.UgiFactory;
 import org.apache.thrift.TException;
@@ -63,7 +57,7 @@ import org.apache.thrift.TException;
  * - run a keep alive thread so the job doesn't end.
  * - Optionally, store the stdout, stderr, and exit value of the child
  *   in hdfs files.
- *   
+ *
  * A note on security.  When jobs are submitted through WebHCat that use HCatalog, it means that
  * metastore access is required.  Hive queries, of course, need metastore access.  This in turn
  * requires delegation token to be obtained for metastore in a <em>secure cluster</em>.  Since we
@@ -82,7 +76,7 @@ public class TempletonControllerJob extends Configured implements Tool, JobSubmi
    *                              and added to the job
    */
   public TempletonControllerJob(boolean secureMetastoreAccess, AppConfig conf) {
-    super();
+    super(new Configuration(conf));
     this.secureMetastoreAccess = secureMetastoreAccess;
     this.appConf = conf;
   }
@@ -102,7 +96,7 @@ public class TempletonControllerJob extends Configured implements Tool, JobSubmi
    * @see org.apache.hive.hcatalog.templeton.CompleteDelegator
    */
   @Override
-  public int run(String[] args) throws IOException, InterruptedException, ClassNotFoundException, 
+  public int run(String[] args) throws IOException, InterruptedException, ClassNotFoundException,
           TException {
     if(LOG.isDebugEnabled()) {
       LOG.debug("Preparing to submit job: " + Arrays.toString(args));
@@ -114,6 +108,15 @@ public class TempletonControllerJob extends Configured implements Tool, JobSubmi
     if(memoryMb != null && memoryMb.length() != 0) {
       conf.set(AppConfig.HADOOP_MAP_MEMORY_MB, memoryMb);
     }
+    String amMemoryMB = appConf.amMemoryMb();
+    if (amMemoryMB != null && !amMemoryMB.isEmpty()) {
+      conf.set(AppConfig.HADOOP_MR_AM_MEMORY_MB, amMemoryMB);
+    }
+    String amJavaOpts = appConf.controllerAMChildOpts();
+    if (amJavaOpts != null && !amJavaOpts.isEmpty()) {
+      conf.set(AppConfig.HADOOP_MR_AM_JAVA_OPTS, amJavaOpts);
+    }
+
     String user = UserGroupInformation.getCurrentUser().getShortUserName();
     conf.set("user.name", user);
     Job job = new Job(conf);
@@ -130,9 +133,10 @@ public class TempletonControllerJob extends Configured implements Tool, JobSubmi
 
     JobClient jc = new JobClient(new JobConf(job.getConfiguration()));
 
-    Token<DelegationTokenIdentifier> mrdt = jc.getDelegationToken(new Text("mr token"));
-    job.getCredentials().addToken(new Text("mr token"), mrdt);
-
+    if(UserGroupInformation.isSecurityEnabled()) {
+      Token<DelegationTokenIdentifier> mrdt = jc.getDelegationToken(new Text("mr token"));
+      job.getCredentials().addToken(new Text("mr token"), mrdt);
+    }
     String metastoreTokenStrForm = addHMSToken(job, user);
 
     job.submit();
@@ -167,12 +171,14 @@ public class TempletonControllerJob extends Configured implements Tool, JobSubmi
     final UserGroupInformation ugi = UgiFactory.getUgi(user);
     UserGroupInformation real = ugi.getRealUser();
     return real.doAs(new PrivilegedExceptionAction<String>() {
+      @Override
       public String run() throws IOException, TException, InterruptedException  {
-        final HiveMetaStoreClient client = new HiveMetaStoreClient(c);
+        final IMetaStoreClient client = HCatUtil.getHiveMetastoreClient(c);
         return ugi.doAs(new PrivilegedExceptionAction<String>() {
+          @Override
           public String run() throws IOException, TException, InterruptedException {
             String u = ugi.getUserName();
-            return client.getDelegationToken(u);
+            return client.getDelegationToken(c.getUser(),u);
           }
         });
       }

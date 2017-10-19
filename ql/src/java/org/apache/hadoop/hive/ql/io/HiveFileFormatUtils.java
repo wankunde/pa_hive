@@ -32,6 +32,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.common.JavaUtils;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator.RecordWriter;
 import org.apache.hadoop.hive.ql.exec.Operator;
@@ -58,7 +59,7 @@ import org.apache.hadoop.mapred.SequenceFileOutputFormat;
 import org.apache.hadoop.mapred.TaskAttemptContext;
 import org.apache.hadoop.mapred.TextInputFormat;
 import org.apache.hadoop.util.Shell;
-import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hive.common.util.ReflectionUtil;
 
 /**
  * An util class for various Hive file format tasks.
@@ -232,8 +233,8 @@ public final class HiveFileFormatUtils {
         jc_output = new JobConf(jc);
         String codecStr = conf.getCompressCodec();
         if (codecStr != null && !codecStr.trim().equals("")) {
-          Class<? extends CompressionCodec> codec = (Class<? extends CompressionCodec>) Class
-              .forName(codecStr);
+          Class<? extends CompressionCodec> codec = 
+              (Class<? extends CompressionCodec>) JavaUtils.loadClass(codecStr);
           FileOutputFormat.setOutputCompressorClass(jc_output, codec);
         }
         String type = conf.getCompressType();
@@ -273,7 +274,7 @@ public final class HiveFileFormatUtils {
 
   private static HiveOutputFormat<?, ?> getHiveOutputFormat(
       Configuration conf, Class<? extends OutputFormat> outputClass) throws HiveException {
-    OutputFormat<?, ?> outputFormat = ReflectionUtils.newInstance(outputClass, conf);
+    OutputFormat<?, ?> outputFormat = ReflectionUtil.newInstance(outputClass, conf);
     if (!(outputFormat instanceof HiveOutputFormat)) {
       outputFormat = new HivePassThroughOutputFormat(outputFormat);
     }

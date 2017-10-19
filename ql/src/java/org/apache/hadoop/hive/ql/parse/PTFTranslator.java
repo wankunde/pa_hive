@@ -342,6 +342,7 @@ public class PTFTranslator {
         outColNames,
         outRR);
     def.setOutputShape(outputShape);
+    def.setReferencedColumns(tFn.getReferencedColumns());
 
     return def;
   }
@@ -537,14 +538,19 @@ public class PTFTranslator {
           "Window range invalid, start boundary is greater than end boundary: %s", spec));
     }
 
-    return new WindowFrameDef(translate(inpShape, s), translate(inpShape, e));
+    WindowFrameDef wfDef = new WindowFrameDef();
+    wfDef.setStart(translate(inpShape, s));
+    wfDef.setEnd(translate(inpShape, e));
+    return wfDef;
   }
 
   private BoundaryDef translate(ShapeDetails inpShape, BoundarySpec bndSpec)
       throws SemanticException {
     if (bndSpec instanceof ValueBoundarySpec) {
       ValueBoundarySpec vBndSpec = (ValueBoundarySpec) bndSpec;
-      ValueBoundaryDef vbDef = new ValueBoundaryDef(vBndSpec.getDirection(), vBndSpec.getAmt());
+      ValueBoundaryDef vbDef = new ValueBoundaryDef();
+      vbDef.setAmt(vBndSpec.getAmt());
+      vbDef.setDirection(vBndSpec.getDirection());
       PTFTranslator.validateNoLeadLagInValueBoundarySpec(vBndSpec.getExpression());
       PTFExpressionDef exprDef = null;
       try {
@@ -558,7 +564,10 @@ public class PTFTranslator {
     }
     else if (bndSpec instanceof RangeBoundarySpec) {
       RangeBoundarySpec rBndSpec = (RangeBoundarySpec) bndSpec;
-      return new RangeBoundaryDef(rBndSpec.getDirection(), rBndSpec.getAmt());
+      RangeBoundaryDef rbDef = new RangeBoundaryDef();
+      rbDef.setAmt(rBndSpec.getAmt());
+      rbDef.setDirection(rBndSpec.getDirection());
+      return rbDef;
     } else if (bndSpec instanceof CurrentRowSpec) {
       CurrentRowDef cbDef = new CurrentRowDef();
       return cbDef;
@@ -609,7 +618,6 @@ public class PTFTranslator {
     case SHORT:
     case DECIMAL:
     case TIMESTAMP:
-    case DATE:
     case STRING:
       break;
     default:

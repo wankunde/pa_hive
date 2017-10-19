@@ -23,7 +23,6 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,38 +61,14 @@ public final class ObjectInspectorFactory {
     JAVA, THRIFT, PROTOCOL_BUFFERS, AVRO
   };
 
-  static ConcurrentHashMap<Type, ObjectInspector> objectInspectorCache = new ConcurrentHashMap<Type, ObjectInspector>();
+  private static ConcurrentHashMap<Type, ObjectInspector> objectInspectorCache = new ConcurrentHashMap<Type, ObjectInspector>();
 
   public static ObjectInspector getReflectionObjectInspector(Type t,
       ObjectInspectorOptions options) {
-    return getReflectionObjectInspector(t, options, true);
-  }
-
-  static ObjectInspector getReflectionObjectInspector(Type t,
-      ObjectInspectorOptions options, boolean ensureInited) {
     ObjectInspector oi = objectInspectorCache.get(t);
     if (oi == null) {
-      oi = getReflectionObjectInspectorNoCache(t, options, ensureInited);
-      ObjectInspector prev = objectInspectorCache.putIfAbsent(t, oi);
-      if (prev != null) {
-        oi = prev;
-      }
-    }
-    if (ensureInited && oi instanceof ReflectionStructObjectInspector) {
-      ReflectionStructObjectInspector soi = (ReflectionStructObjectInspector) oi;
-      synchronized (soi) {
-        HashSet<Type> checkedTypes = new HashSet<Type>();
-        while (!soi.isFullyInited(checkedTypes)) {
-          try {
-            // Wait for up to 3 seconds before checking if any init error.
-            // Init should be fast if no error, no need to make this configurable.
-            soi.wait(3000);
-          } catch (InterruptedException e) {
-            throw new RuntimeException("Interrupted while waiting for "
-              + soi.getClass().getName() + " to initialize", e);
-          }
-        }
-      }
+      oi = getReflectionObjectInspectorNoCache(t, options);
+      objectInspectorCache.put(t, oi);
     }
     verifyObjectInspector(options, oi, ObjectInspectorOptions.JAVA, new Class[]{ThriftStructObjectInspector.class,
       ProtocolBuffersStructObjectInspector.class});
@@ -113,10 +88,10 @@ public final class ObjectInspectorFactory {
    * @param classes ObjectInspector should not be of these types
    */
   private static void verifyObjectInspector(ObjectInspectorOptions option, ObjectInspector oi,
-      ObjectInspectorOptions checkOption, Class<?>[] classes) {
+      ObjectInspectorOptions checkOption, Class[] classes) {
 
     if (option.equals(checkOption)) {
-      for (Class<?> checkClass : classes) {
+      for (Class checkClass : classes) {
         if (oi.getClass().equals(checkClass)) {
           throw new RuntimeException(
             "Cannot call getObjectInspectorByReflection with more then one of " +
@@ -127,11 +102,11 @@ public final class ObjectInspectorFactory {
   }
 
   private static ObjectInspector getReflectionObjectInspectorNoCache(Type t,
-      ObjectInspectorOptions options, boolean ensureInited) {
+      ObjectInspectorOptions options) {
     if (t instanceof GenericArrayType) {
       GenericArrayType at = (GenericArrayType) t;
       return getStandardListObjectInspector(getReflectionObjectInspector(at
-          .getGenericComponentType(), options, ensureInited));
+          .getGenericComponentType(), options));
     }
 
     if (t instanceof ParameterizedType) {
@@ -140,14 +115,14 @@ public final class ObjectInspectorFactory {
       if (List.class.isAssignableFrom((Class<?>) pt.getRawType()) ||
           Set.class.isAssignableFrom((Class<?>) pt.getRawType())) {
         return getStandardListObjectInspector(getReflectionObjectInspector(pt
-            .getActualTypeArguments()[0], options, ensureInited));
+            .getActualTypeArguments()[0], options));
       }
       // Map?
       if (Map.class.isAssignableFrom((Class<?>) pt.getRawType())) {
         return getStandardMapObjectInspector(getReflectionObjectInspector(pt
-            .getActualTypeArguments()[0], options, ensureInited),
+            .getActualTypeArguments()[0], options),
             getReflectionObjectInspector(pt.getActualTypeArguments()[1],
-            options, ensureInited));
+            options));
       }
       // Otherwise convert t to RawType so we will fall into the following if
       // block.
@@ -211,20 +186,8 @@ public final class ObjectInspectorFactory {
 
     // put it into the cache BEFORE it is initialized to make sure we can catch
     // recursive types.
-    ReflectionStructObjectInspector prev =
-        (ReflectionStructObjectInspector) objectInspectorCache.putIfAbsent(t, oi);
-    if (prev != null) {
-      oi = prev;
-    } else {
-      try {
-        oi.init(t, c, options);
-      } finally {
-        if (!oi.inited) {
-          // Failed to init, remove it from cache
-          objectInspectorCache.remove(t, oi);
-        }
-      }
-    }
+    objectInspectorCache.put(t, oi);
+    oi.init(c, options);
     return oi;
 
   }

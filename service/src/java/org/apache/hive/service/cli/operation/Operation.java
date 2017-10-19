@@ -25,9 +25,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.hive.common.metrics.common.Metrics;
-import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
-import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
 import org.apache.hadoop.hive.ql.session.OperationLog;
@@ -213,7 +210,7 @@ public abstract class Operation {
 
       // create OperationLog object with above log file
       try {
-        operationLog = new OperationLog(opHandle.toString(), operationLogFile);
+        operationLog = new OperationLog(opHandle.toString(), operationLogFile, parentSession.getHiveConf());
       } catch (FileNotFoundException e) {
         LOG.warn("Unable to instantiate OperationLog object for operation: " +
             opHandle, e);
@@ -257,14 +254,6 @@ public abstract class Operation {
   public void run() throws HiveSQLException {
     beforeRun();
     try {
-      Metrics metrics = MetricsFactory.getInstance();
-      if (metrics != null) {
-        try {
-          metrics.incrementCounter(MetricsConstant.OPEN_OPERATIONS);
-        } catch (Exception e) {
-          LOG.warn("Error Reporting open operation to Metrics system", e);
-        }
-      }
       runInternal();
     } finally {
       afterRun();

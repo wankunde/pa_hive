@@ -105,6 +105,9 @@ public class HiveStatement implements java.sql.Statement {
    */
   private boolean isExecuteStatementFailed = false;
 
+  // A fair reentrant lock
+  private ReentrantLock transportLock = new ReentrantLock(true);
+
   public HiveStatement(HiveConnection connection, TCLIService.Iface client,
       TSessionHandle sessHandle) {
     this(connection, client, sessHandle, false);
@@ -142,6 +145,7 @@ public class HiveStatement implements java.sql.Statement {
       return;
     }
 
+    transportLock.lock();
     try {
       if (stmtHandle != null) {
         TCancelOperationReq cancelReq = new TCancelOperationReq(stmtHandle);
@@ -152,6 +156,8 @@ public class HiveStatement implements java.sql.Statement {
       throw e;
     } catch (Exception e) {
       throw new SQLException(e.toString(), "08S01", e);
+    } finally {
+      transportLock.unlock();
     }
     isCancelled = true;
   }
@@ -179,6 +185,7 @@ public class HiveStatement implements java.sql.Statement {
   }
 
   void closeClientOperation() throws SQLException {
+    transportLock.lock();
     try {
       if (stmtHandle != null) {
         TCloseOperationReq closeReq = new TCloseOperationReq(stmtHandle);
@@ -189,6 +196,8 @@ public class HiveStatement implements java.sql.Statement {
       throw e;
     } catch (Exception e) {
       throw new SQLException(e.toString(), "08S01", e);
+    } finally {
+      transportLock.unlock();
     }
     isQueryClosed = true;
     isExecuteStatementFailed = false;
@@ -239,6 +248,7 @@ public class HiveStatement implements java.sql.Statement {
     execReq.setRunAsync(true);
     execReq.setConfOverlay(sessConf);
 
+    transportLock.lock();
     try {
       TExecuteStatementResp execResp = client.ExecuteStatement(execReq);
       Utils.verifySuccessWithInfo(execResp.getStatus());
@@ -250,6 +260,8 @@ public class HiveStatement implements java.sql.Statement {
     } catch (Exception ex) {
       isExecuteStatementFailed = true;
       throw new SQLException(ex.toString(), "08S01", ex);
+    } finally {
+      transportLock.unlock();
     }
 
     TGetOperationStatusReq statusReq = new TGetOperationStatusReq(stmtHandle);
@@ -263,7 +275,12 @@ public class HiveStatement implements java.sql.Statement {
          * For an async SQLOperation, GetOperationStatus will use the long polling approach
          * It will essentially return after the HIVE_SERVER2_LONG_POLLING_TIMEOUT (a server config) expires
          */
-        statusResp = client.GetOperationStatus(statusReq);
+        transportLock.lock();
+        try {
+          statusResp = client.GetOperationStatus(statusReq);
+        } finally {
+          transportLock.unlock();
+        }
         Utils.verifySuccessWithInfo(statusResp.getStatus());
         if (statusResp.isSetOperationState()) {
           switch (statusResp.getOperationState()) {
@@ -302,7 +319,7 @@ public class HiveStatement implements java.sql.Statement {
     }
     resultSet =  new HiveQueryResultSet.Builder(this).setClient(client).setSessionHandle(sessHandle)
         .setStmtHandle(stmtHandle).setMaxRows(maxRows).setFetchSize(fetchSize)
-        .setScrollable(isScrollableResultset)
+        .setScrollable(isScrollableResultset).setTransportLock(transportLock)
         .build();
     return true;
   }
@@ -790,6 +807,7 @@ public class HiveStatement implements java.sql.Statement {
 
     List<String> logs = new ArrayList<String>();
     TFetchResultsResp tFetchResultsResp = null;
+    transportLock.lock();
     try {
       if (stmtHandle != null) {
         TFetchResultsReq tFetchResultsReq = new TFetchResultsReq(stmtHandle,
@@ -813,6 +831,8 @@ public class HiveStatement implements java.sql.Statement {
       throw e;
     } catch (Exception e) {
       throw new SQLException("Error when getting query log: " + e, e);
+    } finally {
+      transportLock.unlock();
     }
 
     RowSet rowSet = RowSetFactory.create(tFetchResultsResp.getResults(),

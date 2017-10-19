@@ -512,15 +512,6 @@ public class TimestampWritable implements WritableComparable<TimestampWritable> 
     return decimal != 0;
   }
 
-  /**
-   * Interprets a float as a unix timestamp and returns a Timestamp object
-   * @param f
-   * @return the equivalent Timestamp object
-   */
-  public static Timestamp floatToTimestamp(float f) {
-    return doubleToTimestamp((double) f);
-  }
-
   public static Timestamp decimalToTimestamp(HiveDecimal d) {
     BigDecimal nanoInstant = d.bigDecimalValue().multiply(BILLION_BIG_DECIMAL);
     int nanos = nanoInstant.remainder(BILLION_BIG_DECIMAL).intValue();
@@ -533,6 +524,16 @@ public class TimestampWritable implements WritableComparable<TimestampWritable> 
     t.setNanos(nanos);
 
     return t;
+  }
+
+  /**
+   * Converts the time in seconds or milliseconds to a timestamp.
+   * @param time time in seconds or in milliseconds
+   * @return the timestamp
+   */
+  public static Timestamp longToTimestamp(long time, boolean intToTimestampInSeconds) {
+      // If the time is in seconds, converts it to milliseconds first.
+      return new Timestamp(intToTimestampInSeconds ?  time * 1000 : time);
   }
 
   public static Timestamp doubleToTimestamp(double f) {

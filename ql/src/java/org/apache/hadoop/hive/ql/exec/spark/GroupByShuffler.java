@@ -33,8 +33,4 @@ public class GroupByShuffler implements SparkShuffler {
     return input.groupByKey();
   }
 
-  @Override
-  public String getName() {
-    return "GroupBy";
-  }
 }

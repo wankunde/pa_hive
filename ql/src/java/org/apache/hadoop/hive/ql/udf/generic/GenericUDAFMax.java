@@ -130,7 +130,9 @@ public class GenericUDAFMax extends AbstractGenericUDAFResolver {
 
     @Override
     public GenericUDAFEvaluator getWindowingEvaluator(WindowFrameDef wFrmDef) {
-      return new MaxStreamingFixedWindow(this, wFrmDef);
+      BoundaryDef start = wFrmDef.getStart();
+      BoundaryDef end = wFrmDef.getEnd();
+      return new MaxStreamingFixedWindow(this, start.getAmt(), end.getAmt());
     }
 
   }
@@ -164,9 +166,9 @@ public class GenericUDAFMax extends AbstractGenericUDAFResolver {
     class State extends GenericUDAFStreamingEvaluator<Object>.StreamingState {
       private final Deque<Object[]> maxChain;
 
-      public State(AggregationBuffer buf) {
-        super(buf);
-        maxChain = new ArrayDeque<Object[]>(wFrameDef.isStartUnbounded() ? 1 : wFrameDef.getWindowSize());
+      public State(int numPreceding, int numFollowing, AggregationBuffer buf) {
+        super(numPreceding, numFollowing, buf);
+        maxChain = new ArrayDeque<Object[]>(numPreceding + numFollowing + 1);
       }
 
       @Override
@@ -178,7 +180,7 @@ public class GenericUDAFMax extends AbstractGenericUDAFResolver {
         if (underlying == -1) {
           return -1;
         }
-        if (wFrameDef.isStartUnbounded()) {
+        if (numPreceding == BoundarySpec.UNBOUNDED_AMOUNT) {
           return -1;
         }
         /*
@@ -187,7 +189,7 @@ public class GenericUDAFMax extends AbstractGenericUDAFResolver {
          * underlying * wdwSz sz of maxChain = sz of underlying * wdwSz
          */
 
-        int wdwSz = wFrameDef.getWindowSize();
+        int wdwSz = numPreceding + numFollowing + 1;
         return underlying + (underlying * wdwSz) + (underlying * wdwSz)
             + (3 * JavaDataModel.PRIMITIVES1);
       }
@@ -200,14 +202,14 @@ public class GenericUDAFMax extends AbstractGenericUDAFResolver {
     }
 
     public MaxStreamingFixedWindow(GenericUDAFEvaluator wrappedEval,
-        WindowFrameDef wFrmDef) {
-      super(wrappedEval, wFrmDef);
+        int numPreceding, int numFollowing) {
+      super(wrappedEval, numPreceding, numFollowing);
     }
 
     @Override
     public AggregationBuffer getNewAggregationBuffer() throws HiveException {
       AggregationBuffer underlying = wrappedEval.getNewAggregationBuffer();
-      return new State(underlying);
+      return new State(numPreceding, numFollowing, underlying);
     }
 
     protected ObjectInspector inputOI() {
@@ -233,32 +235,26 @@ public class GenericUDAFMax extends AbstractGenericUDAFResolver {
         }
       }
 
-      // We need to insert 'null' before processing first row for the case: X preceding and y preceding
-      if (s.numRows == 0) {
-        for (int i = wFrameDef.getEnd().getRelativeOffset(); i < 0; i++) {
-          s.results.add(null);
-        }
-      }
-
       /*
        * add row to chain. except in case of UNB preceding: - only 1 max needs
        * to be tracked. - current max will never become out of range. It can
        * only be replaced by a larger max.
        */
-      if (!wFrameDef.isStartUnbounded() || s.maxChain.isEmpty()) {
+      if (s.numPreceding != BoundarySpec.UNBOUNDED_AMOUNT
+          || s.maxChain.isEmpty()) {
         o = o == null ? null : ObjectInspectorUtils.copyToStandardObject(o,
             inputOI(), ObjectInspectorCopyOption.JAVA);
         s.maxChain.addLast(new Object[] { o, s.numRows });
       }
 
-      if (s.numRows >= wFrameDef.getEnd().getRelativeOffset()) {
+      if (s.numRows >= (s.numFollowing)) {
         s.results.add(s.maxChain.getFirst()[0]);
       }
       s.numRows++;
 
       int fIdx = (Integer) s.maxChain.getFirst()[1];
-      if (!wFrameDef.isStartUnbounded()
-          && s.numRows >= fIdx +  wFrameDef.getWindowSize()) {
+      if (s.numPreceding != BoundarySpec.UNBOUNDED_AMOUNT
+          && s.numRows > fIdx + s.numPreceding + s.numFollowing) {
         s.maxChain.removeFirst();
       }
     }
@@ -281,27 +277,18 @@ public class GenericUDAFMax extends AbstractGenericUDAFResolver {
     public Object terminate(AggregationBuffer agg) throws HiveException {
 
       State s = (State) agg;
-      Object[] r = s.maxChain.isEmpty() ? null : s.maxChain.getFirst();
+      Object[] r = s.maxChain.getFirst();
 
-      // After all the rows are processed, continue to generate results for the rows that results haven't generated.
-      // For the case: X following and Y following, process first Y-X results and then insert X nulls.
-      // For the case X preceding and Y following, process Y results.
-      for (int i = Math.max(0, wFrameDef.getStart().getRelativeOffset()); i < wFrameDef.getEnd().getRelativeOffset(); i++) {
-        s.results.add(r == null ? null : r[0]);
+      for (int i = 0; i < s.numFollowing; i++) {
+        s.results.add(r[0]);
         s.numRows++;
-        if (r != null) {
-          int fIdx = (Integer) r[1];
-          if (!wFrameDef.isStartUnbounded()
-              && s.numRows + i >= fIdx + wFrameDef.getWindowSize()
-              && !s.maxChain.isEmpty()) {
-            s.maxChain.removeFirst();
-            r = !s.maxChain.isEmpty() ? s.maxChain.getFirst() : r;
-          }
+        int fIdx = (Integer) r[1];
+        if (s.numPreceding != BoundarySpec.UNBOUNDED_AMOUNT
+            && s.numRows - s.numFollowing + i > fIdx + s.numPreceding
+            && !s.maxChain.isEmpty()) {
+          s.maxChain.removeFirst();
+          r = !s.maxChain.isEmpty() ? s.maxChain.getFirst() : r;
         }
-      }
-      for (int i = 0; i < wFrameDef.getStart().getRelativeOffset(); i++) {
-        s.results.add(null);
-        s.numRows++;
       }
 
       return null;

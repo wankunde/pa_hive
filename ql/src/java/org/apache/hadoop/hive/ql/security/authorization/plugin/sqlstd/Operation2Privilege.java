@@ -29,6 +29,8 @@ import org.apache.hadoop.hive.ql.security.authorization.plugin.HivePrivilegeObje
 import org.apache.hadoop.hive.ql.security.authorization.plugin.HivePrivilegeObject.HivePrivObjectActionType;
 import org.apache.hadoop.hive.ql.security.authorization.plugin.HivePrivilegeObject.HivePrivilegeObjectType;
 
+import com.google.common.base.Preconditions;
+
 /**
  * Mapping of operation to its required input and output privileges
  */
@@ -269,8 +271,16 @@ public class Operation2Privilege {
     // select with grant for exporting contents
     op2Priv.put(HiveOperationType.EXPORT, PrivRequirement.newIOPrivRequirement
 (SEL_GRANT_AR, OWNER_INS_SEL_DEL_NOGRANT_AR));
-    op2Priv.put(HiveOperationType.IMPORT, PrivRequirement.newIOPrivRequirement
-(OWNER_INS_SEL_DEL_NOGRANT_AR, INS_NOGRANT_AR));
+    // For import statement, require uri rwx+owner privileges on input uri, and
+    // necessary privileges on the output table and database
+    // NOTE : privileges are only checked if the object of that type is marked as part of ReadEntity or WriteEntity
+    // So, if a table is present, Import will mark a table as a WriteEntity, and we'll authorize for that, and if not present,
+    // Import will mark the parent db as a WriteEntity, thus ensuring that we check for table creation privileges.
+    op2Priv.put(HiveOperationType.IMPORT, PrivRequirement.newPrivRequirementList(
+        new PrivRequirement(OWNER_INS_SEL_DEL_NOGRANT_AR, IOType.INPUT),
+        new PrivRequirement(arr(SQLPrivTypeGrant.INSERT_NOGRANT, SQLPrivTypeGrant.DELETE_NOGRANT),
+            IOType.OUTPUT, null, HivePrivilegeObjectType.TABLE_OR_VIEW),
+        new PrivRequirement(OWNER_PRIV_AR, IOType.OUTPUT, null, HivePrivilegeObjectType.DATABASE)));
 
     // operations require select priv
     op2Priv.put(HiveOperationType.SHOWCOLUMNS, PrivRequirement.newIOPrivRequirement
@@ -387,11 +397,16 @@ public class Operation2Privilege {
 (null, null));
     op2Priv.put(HiveOperationType.SHOW_ROLE_GRANT, PrivRequirement.newIOPrivRequirement
 (null, null));
-    op2Priv.put(HiveOperationType.SHOW_ROLE_PRINCIPALS, PrivRequirement.newIOPrivRequirement
-(null, null));
-   op2Priv.put(HiveOperationType.ALTERTABLE_EXCHANGEPARTITION, PrivRequirement.newIOPrivRequirement
-(null, null));
-
+    op2Priv.put(HiveOperationType.SHOW_ROLE_PRINCIPALS,
+        PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.GET_CATALOGS, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.GET_SCHEMAS, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.GET_TABLES, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.GET_FUNCTIONS, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.GET_TABLETYPES, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.GET_TYPEINFO, PrivRequirement.newIOPrivRequirement(null, null));
+    op2Priv.put(HiveOperationType.GET_COLUMNS,
+        PrivRequirement.newIOPrivRequirement(SEL_NOGRANT_AR, null));
 
   }
 
@@ -428,6 +443,7 @@ public class Operation2Privilege {
   public static RequiredPrivileges getRequiredPrivs(HiveOperationType hiveOpType,
       HivePrivilegeObject hObj, IOType ioType) {
     List<PrivRequirement> opPrivs = op2Priv.get(hiveOpType);
+    Preconditions.checkNotNull(opPrivs, "Privileges for " + hiveOpType + " are null");
     RequiredPrivileges reqPrivs = new RequiredPrivileges();
 
     // Find the PrivRequirements that match on IOType, ActionType, and HivePrivilegeObjectType add

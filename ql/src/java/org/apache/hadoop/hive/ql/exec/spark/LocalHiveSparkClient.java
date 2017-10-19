@@ -199,11 +199,7 @@ public class LocalHiveSparkClient implements HiveSparkClient {
 
   @Override
   public void close() {
-    synchronized (LocalHiveSparkClient.class) {
-      client = null;
-    }
-    if (sc != null) {
-      sc.stop();
-    }
+    sc.stop();
+    client = null;
   }
 }

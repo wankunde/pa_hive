@@ -25,12 +25,16 @@ package org.apache.hive.beeline;
 import org.apache.hadoop.io.IOUtils;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -39,7 +43,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.SQLWarning;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -127,6 +130,46 @@ public class Commands {
     return true;
   }
 
+  public boolean addlocaldrivername(String line) {
+    String driverName = arg1(line, "driver class name");
+    try {
+      beeLine.setDrivers(Arrays.asList(beeLine.scanDrivers(false)));
+    } catch (IOException e) {
+      beeLine.error("Fail to scan drivers due to the exception:" + e);
+      beeLine.error(e);
+    }
+    for (Driver d : beeLine.getDrivers()) {
+      if (driverName.equals(d.getClass().getName())) {
+        beeLine.addLocalDriverClazz(driverName);
+        return true;
+      }
+    }
+    beeLine.error("Fail to find a driver which contains the driver class");
+    return false;
+  }
+
+  public boolean addlocaldriverjar(String line) {
+    // If jar file is in the hdfs, it should be downloaded first.
+    String jarPath = arg1(line, "jar path");
+    File p = new File(jarPath);
+    if (!p.exists()) {
+      beeLine.error("The jar file in the path " + jarPath + " can't be found!");
+      return false;
+    }
+
+    URLClassLoader classLoader = (URLClassLoader) Thread.currentThread().getContextClassLoader();
+    try {
+      beeLine.debug(jarPath + " is added to the local beeline.");
+      URLClassLoader newClassLoader = new URLClassLoader(new URL[]{p.toURL()}, classLoader);
+
+      Thread.currentThread().setContextClassLoader(newClassLoader);
+      beeLine.setDrivers(Arrays.asList(beeLine.scanDrivers(false)));
+    } catch (Exception e) {
+      beeLine.error("Fail to add local jar due to the exception:" + e);
+      beeLine.error(e);
+    }
+    return true;
+  }
 
   public boolean history(String line) {
     Iterator hist = beeLine.getConsoleReader().getHistory().entries();
@@ -753,24 +796,15 @@ public class Commands {
     }
 
     line = line.trim();
-    List<String> cmdList = new ArrayList<String>();
+    String[] cmds;
     if (entireLineAsCommand) {
-      cmdList.add(line);
+      cmds = new String[1];
+      cmds[0] = line;
     } else {
-      StringBuffer command = new StringBuffer();
-      for (String cmdpart: line.split(";")) {
-        if (cmdpart.endsWith("\\")) {
-          command.append(cmdpart.substring(0, cmdpart.length() -1)).append(";");
-          continue;
-        } else {
-          command.append(cmdpart);
-        }
-        cmdList.add(command.toString());
-        command.setLength(0);
-      }
+      cmds = line.split(";");
     }
-    for (int i = 0; i < cmdList.size(); i++) {
-      String sql = cmdList.get(i).trim();
+    for (int i = 0; i < cmds.length; i++) {
+      String sql = cmds[i].trim();
       if (sql.length() != 0) {
         if (beeLine.isComment(sql)) {
           //skip this and rest cmds in the line

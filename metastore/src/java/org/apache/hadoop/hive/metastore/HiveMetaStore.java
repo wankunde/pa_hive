@@ -18,14 +18,38 @@
 
 package org.apache.hadoop.hive.metastore;
 
-import com.facebook.fb303.FacebookBase;
-import com.facebook.fb303.fb_status;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Splitter;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableListMultimap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Multimaps;
+import static org.apache.commons.lang.StringUtils.join;
+import static org.apache.hadoop.hive.metastore.MetaStoreUtils.DEFAULT_DATABASE_COMMENT;
+import static org.apache.hadoop.hive.metastore.MetaStoreUtils.DEFAULT_DATABASE_NAME;
+import static org.apache.hadoop.hive.metastore.MetaStoreUtils.validateName;
+
+import java.io.IOException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.AbstractMap;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Formatter;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Properties;
+import java.util.Set;
+import java.util.Timer;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.regex.Pattern;
+
+import javax.jdo.JDOException;
 
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.logging.Log;
@@ -34,18 +58,16 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.FileUtils;
-import org.apache.hadoop.hive.common.JvmPauseMonitor;
 import org.apache.hadoop.hive.common.LogUtils;
 import org.apache.hadoop.hive.common.LogUtils.LogInitializationException;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.common.classification.InterfaceStability;
 import org.apache.hadoop.hive.common.cli.CommonCliOptions;
-import org.apache.hadoop.hive.common.metrics.common.Metrics;
-import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
-import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
+import org.apache.hadoop.hive.common.metrics.Metrics;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.api.AbortTxnRequest;
+import org.apache.hadoop.hive.metastore.api.AddDynamicPartitions;
 import org.apache.hadoop.hive.metastore.api.AddPartitionsRequest;
 import org.apache.hadoop.hive.metastore.api.AddPartitionsResult;
 import org.apache.hadoop.hive.metastore.api.AggrStats;
@@ -64,8 +86,9 @@ import org.apache.hadoop.hive.metastore.api.DropPartitionsRequest;
 import org.apache.hadoop.hive.metastore.api.DropPartitionsResult;
 import org.apache.hadoop.hive.metastore.api.EnvironmentContext;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
+import org.apache.hadoop.hive.metastore.api.FireEventRequest;
+import org.apache.hadoop.hive.metastore.api.FireEventResponse;
 import org.apache.hadoop.hive.metastore.api.Function;
-import org.apache.hadoop.hive.metastore.api.GetAllFunctionsResponse;
 import org.apache.hadoop.hive.metastore.api.GetOpenTxnsInfoResponse;
 import org.apache.hadoop.hive.metastore.api.GetOpenTxnsResponse;
 import org.apache.hadoop.hive.metastore.api.GetPrincipalsInRoleRequest;
@@ -146,6 +169,7 @@ import org.apache.hadoop.hive.metastore.events.DropIndexEvent;
 import org.apache.hadoop.hive.metastore.events.DropPartitionEvent;
 import org.apache.hadoop.hive.metastore.events.DropTableEvent;
 import org.apache.hadoop.hive.metastore.events.EventCleanerTask;
+import org.apache.hadoop.hive.metastore.events.InsertEvent;
 import org.apache.hadoop.hive.metastore.events.LoadPartitionDoneEvent;
 import org.apache.hadoop.hive.metastore.events.PreAddIndexEvent;
 import org.apache.hadoop.hive.metastore.events.PreAddPartitionEvent;
@@ -184,16 +208,12 @@ import org.apache.hadoop.hive.thrift.TUGIContainingTransport;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
-import org.apache.hive.common.util.HiveStringUtils;
 import org.apache.thrift.TException;
 import org.apache.thrift.TProcessor;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.protocol.TCompactProtocol;
-import org.apache.thrift.protocol.TProtocol;
 import org.apache.thrift.protocol.TProtocolFactory;
-import org.apache.thrift.server.ServerContext;
 import org.apache.thrift.server.TServer;
-import org.apache.thrift.server.TServerEventHandler;
 import org.apache.thrift.server.TThreadPoolServer;
 import org.apache.thrift.transport.TFramedTransport;
 import org.apache.thrift.transport.TServerSocket;
@@ -203,41 +223,12 @@ import org.apache.thrift.transport.TTransportFactory;
 
 import com.facebook.fb303.FacebookBase;
 import com.facebook.fb303.fb_status;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimaps;
-import javax.jdo.JDOException;
-
-import java.io.IOException;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.AbstractMap;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Formatter;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Properties;
-import java.util.Set;
-import java.util.Timer;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.regex.Pattern;
-
-import static org.apache.commons.lang.StringUtils.join;
-import static org.apache.hadoop.hive.metastore.MetaStoreUtils.*;
 
 /**
  * TODO:pc remove application logic to a separate interface.
@@ -249,6 +240,12 @@ public class HiveMetaStore extends ThriftHiveMetastore {
   // Can be used to determine if the calls to metastore api (HMSHandler) are being made with
   // embedded metastore or a remote one
   private static boolean isMetaStoreRemote = false;
+
+  // Used for testing to simulate method timeout.
+  @VisibleForTesting
+  static boolean TEST_TIMEOUT_ENABLED = false;
+  @VisibleForTesting
+  static long TEST_TIMEOUT_VALUE = -1;
 
   /** A fixed date format to be used for hive partition column values. */
   public static final ThreadLocal<DateFormat> PARTITION_DATE_FORMAT =
@@ -306,7 +303,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
           }
         };
 
-    private final ThreadLocal<TxnHandler> threadLocalTxn = new ThreadLocal<TxnHandler>() {
+    private static final ThreadLocal<TxnHandler> threadLocalTxn = new ThreadLocal<TxnHandler>() {
       @Override
       protected synchronized TxnHandler initialValue() {
         return null;
@@ -323,7 +320,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
 
     // Thread local configuration is needed as many threads could make changes
     // to the conf using the connection hook
-    private final ThreadLocal<Configuration> threadLocalConf =
+    private static final ThreadLocal<Configuration> threadLocalConf =
         new ThreadLocal<Configuration>() {
           @Override
           protected synchronized Configuration initialValue() {
@@ -468,10 +465,9 @@ public class HiveMetaStore extends ThriftHiveMetastore {
         }
       }
 
-      //Start Metrics for Embedded mode
-      if (hiveConf.getBoolVar(ConfVars.METASTORE_METRICS)) {
+      if (hiveConf.getBoolean("hive.metastore.metrics.enabled", false)) {
         try {
-          MetricsFactory.init(hiveConf);
+          Metrics.init();
         } catch (Exception e) {
           // log exception, but ignore inability to start
           LOG.error("error in Metrics init: " + e.getClass().getName() + " "
@@ -484,6 +480,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
           hiveConf.getVar(HiveConf.ConfVars.METASTORE_PRE_EVENT_LISTENERS));
       listeners = MetaStoreUtils.getMetaStoreListeners(MetaStoreEventListener.class, hiveConf,
           hiveConf.getVar(HiveConf.ConfVars.METASTORE_EVENT_LISTENERS));
+      listeners.add(new SessionPropertiesListener(hiveConf));
       endFunctionListeners = MetaStoreUtils.getMetaStoreListeners(
           MetaStoreEndFunctionListener.class, hiveConf,
           hiveConf.getVar(HiveConf.ConfVars.METASTORE_END_FUNCTION_LISTENERS));
@@ -754,13 +751,11 @@ public class HiveMetaStore extends ThriftHiveMetastore {
       incrementCounter(function);
       logInfo((getIpAddress() == null ? "" : "source:" + getIpAddress() + " ") +
           function + extraLogInfo);
-      if (MetricsFactory.getInstance() != null) {
-        try {
-          MetricsFactory.getInstance().startScope(function);
-        } catch (IOException e) {
-          LOG.debug("Exception when starting metrics scope"
+      try {
+        Metrics.startScope(function);
+      } catch (IOException e) {
+        LOG.debug("Exception when starting metrics scope"
             + e.getClass().getName() + " " + e.getMessage(), e);
-        }
       }
       return function;
     }
@@ -798,12 +793,10 @@ public class HiveMetaStore extends ThriftHiveMetastore {
     }
 
     private void endFunction(String function, MetaStoreEndFunctionContext context) {
-      if (MetricsFactory.getInstance() != null) {
-        try {
-          MetricsFactory.getInstance().endScope(function);
-        } catch (IOException e) {
-          LOG.debug("Exception when closing metrics scope" + e);
-        }
+      try {
+        Metrics.endScope(function);
+      } catch (IOException e) {
+        LOG.debug("Exception when closing metrics scope" + e);
       }
 
       for (MetaStoreEndFunctionListener listener : endFunctionListeners) {
@@ -899,6 +892,15 @@ public class HiveMetaStore extends ThriftHiveMetastore {
           }
         } catch (NoSuchObjectException e) {
           // expected
+        }
+
+        if (TEST_TIMEOUT_ENABLED) {
+          try {
+            Thread.sleep(TEST_TIMEOUT_VALUE);
+          } catch (InterruptedException e) {
+            // do nothing
+          }
+          Deadline.checkTimeout();
         }
 
         create_database_core(getMS(), db);
@@ -1026,9 +1028,14 @@ public class HiveMetaStore extends ThriftHiveMetastore {
             ConfVars.METASTORE_BATCH_RETRIEVE_MAX);
 
         int startIndex = 0;
+        int endIndex = -1;
         // retrieve the tables from the metastore in batches to alleviate memory constraints
-        while (startIndex < allTables.size()) {
-          int endIndex = Math.min(startIndex + tableBatchSize, allTables.size());
+        while (endIndex < allTables.size() - 1) {
+          startIndex = endIndex + 1;
+          endIndex = endIndex + tableBatchSize;
+          if (endIndex >= allTables.size()) {
+            endIndex = allTables.size() - 1;
+          }
 
           List<Table> tables = null;
           try {
@@ -1064,8 +1071,6 @@ public class HiveMetaStore extends ThriftHiveMetastore {
               // Drop the table but not its data
               drop_table(name, table.getTableName(), false);
             }
-
-            startIndex = endIndex;
           }
         }
 
@@ -1818,9 +1823,9 @@ public class HiveMetaStore extends ThriftHiveMetastore {
     /**
      * Gets multiple tables from the hive metastore.
      *
-     * @param dbName
+     * @param dbname
      *          The name of the database in which the tables reside
-     * @param tableNames
+     * @param names
      *          The names of the tables to get.
      *
      * @return A list of tables whose names are in the the list "names" and
@@ -1832,44 +1837,21 @@ public class HiveMetaStore extends ThriftHiveMetastore {
      * @throws UnknownDBException
      */
     @Override
-    public List<Table> get_table_objects_by_name(final String dbName, final List<String> tableNames)
+    public List<Table> get_table_objects_by_name(final String dbname, final List<String> names)
         throws MetaException, InvalidOperationException, UnknownDBException {
-      List<Table> tables = new ArrayList<Table>();
-      startMultiTableFunction("get_multi_table", dbName, tableNames);
+      List<Table> tables = null;
+      startMultiTableFunction("get_multi_table", dbname, names);
       Exception ex = null;
-      int tableBatchSize = HiveConf.getIntVar(hiveConf,
-          ConfVars.METASTORE_BATCH_RETRIEVE_MAX);
-
       try {
-        if (dbName == null || dbName.isEmpty()) {
+
+        if (dbname == null || dbname.isEmpty()) {
           throw new UnknownDBException("DB name is null or empty");
         }
-        if (tableNames == null)
+        if (names == null)
         {
-          throw new InvalidOperationException(dbName + " cannot find null tables");
+          throw new InvalidOperationException(dbname + " cannot find null tables");
         }
-
-        // The list of table names could contain duplicates. RawStore.getTableObjectsByName()
-        // only guarantees returning no duplicate table objects in one batch. If we need
-        // to break into multiple batches, remove duplicates first.
-        List<String> distinctTableNames = tableNames;
-        if (distinctTableNames.size() > tableBatchSize) {
-          List<String> lowercaseTableNames = new ArrayList<String>();
-          for (String tableName : tableNames) {
-            lowercaseTableNames.add(HiveStringUtils.normalizeIdentifier(tableName));
-          }
-          distinctTableNames = new ArrayList<String>(new HashSet<String>(lowercaseTableNames));
-        }
-
-        RawStore ms = getMS();
-        int startIndex = 0;
-        // Retrieve the tables from the metastore in batches. Some databases like
-        // Oracle cannot have over 1000 expressions in a in-list
-        while (startIndex < distinctTableNames.size()) {
-          int endIndex = Math.min(startIndex + tableBatchSize, distinctTableNames.size());
-          tables.addAll(ms.getTableObjectsByName(dbName, distinctTableNames.subList(startIndex, endIndex)));
-          startIndex = endIndex;
-        }
+        tables = getMS().getTableObjectsByName(dbname, names);
       } catch (Exception e) {
         ex = e;
         if (e instanceof MetaException) {
@@ -1882,7 +1864,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
           throw newMetaException(e);
         }
       } finally {
-        endFunction("get_multi_table", tables != null, ex, join(tableNames, ","));
+        endFunction("get_multi_table", tables != null, ex, join(names, ","));
       }
       return tables;
     }
@@ -2593,7 +2575,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
         pathCreated = wh.renameDir(sourcePath, destPath);
         success = ms.commitTransaction();
       } finally {
-        if (!success || !pathCreated) {
+        if (!success) {
           ms.rollbackTransaction();
           if (pathCreated) {
             wh.renameDir(destPath, sourcePath);
@@ -5525,26 +5507,6 @@ public class HiveMetaStore extends ThriftHiveMetastore {
     }
 
     @Override
-    public GetAllFunctionsResponse get_all_functions()
-            throws MetaException {
-      GetAllFunctionsResponse response = new GetAllFunctionsResponse();
-      startFunction("get_all_functions");
-      RawStore ms = getMS();
-      List<Function> allFunctions = null;
-      Exception ex = null;
-      try {
-        allFunctions = ms.getAllFunctions();
-      } catch (Exception e) {
-        ex = e;
-        throw newMetaException(e);
-      } finally {
-        endFunction("get_all_functions", allFunctions != null, ex);
-      }
-      response.setFunctions(allFunctions);
-      return response;
-    }
-
-    @Override
     public Function get_function(String dbName, String funcName)
         throws MetaException, NoSuchObjectException, TException {
       startFunction("get_function", ": " + dbName + "." + funcName);
@@ -5563,7 +5525,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
         ex = e;
         throw newMetaException(e);
       } finally {
-        endFunction("get_database", func != null, ex);
+        endFunction("get_function", func != null, ex);
       }
 
       return func;
@@ -5640,6 +5602,12 @@ public class HiveMetaStore extends ThriftHiveMetastore {
     @Override
     public ShowCompactResponse show_compact(ShowCompactRequest rqst) throws TException {
       return getTxnHandler().showCompact(rqst);
+    }
+
+    @Override
+    public void add_dynamic_partitions(AddDynamicPartitions rqst)
+        throws NoSuchTxnException, TxnAbortedException, TException {
+      getTxnHandler().addDynamicPartitions(rqst);
     }
 
     @Override
@@ -5761,6 +5729,25 @@ public class HiveMetaStore extends ThriftHiveMetastore {
     public CurrentNotificationEventId get_current_notificationEventId() throws TException {
       RawStore ms = getMS();
       return ms.getCurrentNotificationEventId();
+    }
+
+    @Override
+    public FireEventResponse fire_listener_event(FireEventRequest rqst) throws TException {
+      switch (rqst.getData().getSetField()) {
+        case INSERT_DATA:
+          InsertEvent event = new InsertEvent(rqst.getDbName(), rqst.getTableName(),
+              rqst.getPartitionVals(), rqst.getData().getInsertData().getFilesAdded(),
+              rqst.isSuccessful(), this);
+          for (MetaStoreEventListener listener : listeners) {
+            listener.onInsert(event);
+          }
+          return new FireEventResponse();
+
+        default:
+          throw new TException("Event type " + rqst.getData().getSetField().toString() +
+              " not currently supported.");
+      }
+
     }
   }
 
@@ -5902,7 +5889,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
         System.err.println(msg);
       }
 
-      final HiveConf conf = new HiveConf(HMSHandler.class);
+      HiveConf conf = new HiveConf(HMSHandler.class);
 
       // set all properties specified on the command line
       for (Map.Entry<Object, Object> item : hiveconf.entrySet()) {
@@ -5918,27 +5905,8 @@ public class HiveMetaStore extends ThriftHiveMetastore {
           if (isCliVerbose) {
             System.err.println(shutdownMsg);
           }
-          if (conf.getBoolVar(ConfVars.METASTORE_METRICS)) {
-            try {
-              MetricsFactory.close();
-            } catch (Exception e) {
-              LOG.error("error in Metrics deinit: " + e.getClass().getName() + " "
-                + e.getMessage(), e);
-            }
-          }
         }
       });
-
-      //Start Metrics for Standalone (Remote) Mode
-      if (conf.getBoolVar(ConfVars.METASTORE_METRICS)) {
-        try {
-          MetricsFactory.init(conf);
-        } catch (Exception e) {
-          // log exception, but ignore inability to start
-          LOG.error("error in Metrics init: " + e.getClass().getName() + " "
-            + e.getMessage(), e);
-        }
-      }
 
       Lock startLock = new ReentrantLock();
       Condition startCondition = startLock.newCondition();
@@ -6062,42 +6030,6 @@ public class HiveMetaStore extends ThriftHiveMetastore {
           .maxWorkerThreads(maxWorkerThreads);
 
       TServer tServer = new TThreadPoolServer(args);
-      TServerEventHandler tServerEventHandler = new TServerEventHandler() {
-        @Override
-        public void preServe() {
-        }
-
-        @Override
-        public ServerContext createContext(TProtocol tProtocol, TProtocol tProtocol1) {
-          try {
-            Metrics metrics = MetricsFactory.getInstance();
-            if (metrics != null) {
-              metrics.incrementCounter(MetricsConstant.OPEN_CONNECTIONS);
-            }
-          } catch (Exception e) {
-            LOG.warn("Error Reporting Metastore open connection to Metrics system", e);
-          }
-          return null;
-        }
-
-        @Override
-        public void deleteContext(ServerContext serverContext, TProtocol tProtocol, TProtocol tProtocol1) {
-          try {
-            Metrics metrics = MetricsFactory.getInstance();
-            if (metrics != null) {
-              metrics.decrementCounter(MetricsConstant.OPEN_CONNECTIONS);
-            }
-          } catch (Exception e) {
-            LOG.warn("Error Reporting Metastore close connection to Metrics system", e);
-          }
-        }
-
-        @Override
-        public void processContext(ServerContext serverContext, TTransport tTransport, TTransport tTransport1) {
-        }
-      };
-
-      tServer.setServerEventHandler(tServerEventHandler);
       HMSHandler.LOG.info("Started the new metaserver on port [" + port
           + "]...");
       HMSHandler.LOG.info("Options.minWorkerThreads = "
@@ -6165,13 +6097,7 @@ public class HiveMetaStore extends ThriftHiveMetastore {
         // Wrap the start of the threads in a catch Throwable loop so that any failures
         // don't doom the rest of the metastore.
         startLock.lock();
-        try {
-          JvmPauseMonitor pauseMonitor = new JvmPauseMonitor(conf);
-          pauseMonitor.start();
-        } catch (Throwable t) {
-          LOG.warn("Could not initiate the JvmPauseMonitor thread." + " GCs and Pauses may not be " +
-            "warned upon.", t);
-        }
+        ShimLoader.getHadoopShims().startPauseMonitor(conf);
 
         try {
           // Per the javadocs on Condition, do not depend on the condition alone as a start gate

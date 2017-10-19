@@ -48,18 +48,18 @@ PREHOOK: query: explain
 insert overwrite table outputTbl1
 SELECT a.key
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 PREHOOK: type: QUERY
 POSTHOOK: query: explain
 insert overwrite table outputTbl1
 SELECT a.key
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
@@ -73,30 +73,30 @@ STAGE PLANS:
       Map Operator Tree:
           TableScan
             alias: inputtbl1
-            Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Select Operator
               expressions: key (type: string)
               outputColumnNames: _col0
-              Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+              Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               Group By Operator
                 keys: _col0 (type: string)
                 mode: hash
                 outputColumnNames: _col0
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                 Reduce Output Operator
                   key expressions: _col0 (type: string)
                   sort order: +
                   Map-reduce partition columns: _col0 (type: string)
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
       Reduce Operator Tree:
         Group By Operator
           keys: KEY._col0 (type: string)
           mode: mergepartial
           outputColumnNames: _col0
-          Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+          Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
           File Output Operator
             compressed: false
-            Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             table:
                 input format: org.apache.hadoop.mapred.TextInputFormat
                 output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -118,30 +118,30 @@ STAGE PLANS:
       Map Operator Tree:
           TableScan
             alias: inputtbl1
-            Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Select Operator
               expressions: key (type: string)
               outputColumnNames: _col0
-              Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+              Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               Group By Operator
                 keys: _col0 (type: string)
                 mode: hash
                 outputColumnNames: _col0
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                 Reduce Output Operator
                   key expressions: _col0 (type: string)
                   sort order: +
                   Map-reduce partition columns: _col0 (type: string)
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
       Reduce Operator Tree:
         Group By Operator
           keys: KEY._col0 (type: string)
           mode: mergepartial
           outputColumnNames: _col0
-          Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+          Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
           File Output Operator
             compressed: false
-            Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             table:
                 input format: org.apache.hadoop.mapred.TextInputFormat
                 output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -151,9 +151,9 @@ STAGE PLANS:
 PREHOOK: query: insert overwrite table outputTbl1
 SELECT a.key
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 PREHOOK: type: QUERY
 PREHOOK: Input: default@inputtbl1
@@ -161,14 +161,14 @@ PREHOOK: Output: default@outputtbl1
 POSTHOOK: query: insert overwrite table outputTbl1
 SELECT a.key
 FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
 ) a
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@inputtbl1
 POSTHOOK: Output: default@outputtbl1
-POSTHOOK: Lineage: outputtbl1.key EXPRESSION [(inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), ]
+POSTHOOK: Lineage: outputtbl1.key EXPRESSION [(inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), (inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), ]
 PREHOOK: query: desc formatted outputTbl1
 PREHOOK: type: DESCTABLE
 PREHOOK: Input: default@outputtbl1

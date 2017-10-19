@@ -28,9 +28,7 @@ import org.apache.hadoop.fs.ContentSummary;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.QueryPlan;
 import org.apache.hadoop.hive.ql.exec.TaskRunner;
-import org.apache.hadoop.hive.ql.optimizer.lineage.LineageCtx.Index;
 import org.apache.hadoop.hive.ql.session.SessionState;
-import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.hive.shims.Utils;
 import org.apache.hadoop.security.UserGroupInformation;
 /**
@@ -49,15 +47,18 @@ public class HookContext {
   private Set<ReadEntity> inputs;
   private Set<WriteEntity> outputs;
   private LineageInfo linfo;
-  private Index depMap;
   private UserGroupInformation ugi;
   private HookType hookType;
   final private Map<String, ContentSummary> inputPathToContentSummary;
   private final String ipAddress;
   private final String userName;
+  // unique id set for operation when run from HS2, base64 encoded value of
+  // TExecuteStatementResp.TOperationHandle.THandleIdentifier.guid
+  private final String operationId;
 
   public HookContext(QueryPlan queryPlan, HiveConf conf,
-      Map<String, ContentSummary> inputPathToContentSummary, String userName, String ipAddress) throws Exception {
+      Map<String, ContentSummary> inputPathToContentSummary, String userName, String ipAddress,
+      String operationId) throws Exception {
     this.queryPlan = queryPlan;
     this.conf = conf;
     this.inputPathToContentSummary = inputPathToContentSummary;
@@ -66,13 +67,12 @@ public class HookContext {
     outputs = queryPlan.getOutputs();
     ugi = Utils.getUGI();
     linfo= null;
-    depMap = null;
     if(SessionState.get() != null){
       linfo = SessionState.get().getLineageState().getLineageInfo();
-      depMap = SessionState.get().getLineageState().getIndex();
     }
-    this.ipAddress = ipAddress;
     this.userName = userName;
+    this.ipAddress = ipAddress;
+    this.operationId = operationId;
   }
 
   public QueryPlan getQueryPlan() {
@@ -127,14 +127,6 @@ public class HookContext {
     this.linfo = linfo;
   }
 
-  public Index getIndex() {
-    return depMap;
-  }
-
-  public void setIndex(Index depMap) {
-    this.depMap = depMap;
-  }
-
   public UserGroupInformation getUgi() {
     return ugi;
   }
@@ -165,5 +157,9 @@ public class HookContext {
 
   public String getUserName() {
     return this.userName;
+  }
+
+  public String getOperationId() {
+    return operationId;
   }
 }

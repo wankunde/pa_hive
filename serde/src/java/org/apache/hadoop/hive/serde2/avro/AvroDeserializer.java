@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.rmi.server.UID;
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -162,7 +163,7 @@ class AvroDeserializer {
         reEncoder = new SchemaReEncoder(r.getSchema(), readerSchema);
         reEncoderCache.put(recordReaderId, reEncoder);
       } else{
-        LOG.debug("Adding new valid RRID :" +  recordReaderId);
+        LOG.info("Adding new valid RRID :" +  recordReaderId);
         noEncodingNeeded.add(recordReaderId);
       }
       if(reEncoder != null) {
@@ -288,6 +289,12 @@ class AvroDeserializer {
       }
 
       return new Date(DateWritable.daysToMillis((Integer)datum));
+    case TIMESTAMP:
+      if (recordSchema.getType() != Type.LONG) {
+        throw new AvroSerdeException(
+          "Unexpected Avro schema for Date TypeInfo: " + recordSchema.getType());
+      }
+      return new Timestamp((Long)datum);
     default:
       return datum;
     }
@@ -335,7 +342,8 @@ class AvroDeserializer {
         currentFileSchema = fileSchema;
       }
     }
-    return worker(datum, currentFileSchema, schema, SchemaToTypeInfo.generateTypeInfo(schema));
+    return worker(datum, currentFileSchema, schema,
+      SchemaToTypeInfo.generateTypeInfo(schema, null));
 
   }
 

@@ -84,6 +84,8 @@ public class Context {
   private final Configuration conf;
   protected int pathid = 10000;
   protected boolean explain = false;
+  protected String cboInfo;
+  protected boolean cboSucceeded;
   protected boolean explainLogical = false;
   protected String cmd = "";
   // number of previous attempts
@@ -695,4 +697,21 @@ public class Context {
   public AcidUtils.Operation getAcidOperation() {
     return acidOperation;
   }
+
+  public String getCboInfo() {
+    return cboInfo;
+  }
+
+  public void setCboInfo(String cboInfo) {
+    this.cboInfo = cboInfo;
+  }
+
+  public boolean isCboSucceeded() {
+    return cboSucceeded;
+  }
+
+  public void setCboSucceeded(boolean cboSucceeded) {
+    this.cboSucceeded = cboSucceeded;
+  }
+
 }

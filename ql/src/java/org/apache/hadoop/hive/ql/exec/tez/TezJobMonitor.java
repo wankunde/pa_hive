@@ -21,14 +21,15 @@ package org.apache.hadoop.hive.ql.exec.tez;
 import static org.apache.tez.dag.api.client.DAGStatus.State.RUNNING;
 import static org.fusesource.jansi.Ansi.ansi;
 import static org.fusesource.jansi.internal.CLibrary.STDOUT_FILENO;
+import static org.fusesource.jansi.internal.CLibrary.STDERR_FILENO;
 import static org.fusesource.jansi.internal.CLibrary.isatty;
 
-import jline.TerminalFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator;
 import org.apache.hadoop.hive.ql.exec.Heartbeater;
 import org.apache.hadoop.hive.ql.exec.MapOperator;
 import org.apache.hadoop.hive.ql.exec.ReduceSinkOperator;
+import org.apache.hadoop.hive.ql.exec.Utilities;
 import org.apache.hadoop.hive.ql.lockmgr.HiveTxnManager;
 import org.apache.hadoop.hive.ql.log.PerfLogger;
 import org.apache.hadoop.hive.ql.session.SessionState;
@@ -63,6 +64,8 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
+import jline.TerminalFactory;
+
 /**
  * TezJobMonitor keeps track of a tez job while it's being executed. It will
  * print status to the console and retrieve final status of the job after
@@ -96,11 +99,11 @@ public class TezJobMonitor {
 
   // in-place progress update related variables
   private int lines;
-  private PrintStream out;
+  private final PrintStream out;
   private String separator;
 
   private transient LogHelper console;
-  private final PerfLogger perfLogger = SessionState.getPerfLogger();
+  private final PerfLogger perfLogger = PerfLogger.getPerfLogger();
   private final int checkInterval = 200;
   private final int maxRetryInterval = 2500;
   private final int printInterval = 3000;
@@ -113,6 +116,8 @@ public class TezJobMonitor {
   private final NumberFormat commaFormat;
   private static final List<DAGClient> shutdownList;
 
+  private StringBuffer diagnostics;
+
   static {
     shutdownList = Collections.synchronizedList(new LinkedList<DAGClient>());
     Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -122,7 +127,7 @@ public class TezJobMonitor {
           TezJobMonitor.killRunningJobs();
         }
         try {
-          for (TezSessionState s: TezSessionState.getOpenSessions()) {
+          for (TezSessionState s : TezSessionPoolManager.getInstance().getOpenSessions()) {
             System.err.println("Shutting down tez session.");
             TezSessionPoolManager.getInstance().close(s, false);
           }
@@ -164,6 +169,9 @@ public class TezJobMonitor {
     try {
       // isatty system call will return 1 if the file descriptor is terminal else 0
       if (isatty(STDOUT_FILENO) == 0) {
+        return false;
+      }
+      if (isatty(STDERR_FILENO) == 0) {
         return false;
       }
     } catch (NoClassDefFoundError ignore) {
@@ -246,6 +254,7 @@ public class TezJobMonitor {
       DAG dag) throws InterruptedException {
     DAGStatus status = null;
     completed = new HashSet<String>();
+    diagnostics = new StringBuffer();
 
     boolean running = false;
     boolean done = false;
@@ -256,7 +265,8 @@ public class TezJobMonitor {
     Set<StatusGetOpts> opts = new HashSet<StatusGetOpts>();
     Heartbeater heartbeater = new Heartbeater(txnMgr, conf);
     long startTime = 0;
-    boolean isProfileEnabled = conf.getBoolVar(conf, HiveConf.ConfVars.TEZ_EXEC_SUMMARY);
+    boolean isProfileEnabled = conf.getBoolVar(conf, HiveConf.ConfVars.TEZ_EXEC_SUMMARY) ||
+      Utilities.isPerfOrAboveLogging(conf);
     boolean inPlaceUpdates = conf.getBoolVar(conf, HiveConf.ConfVars.TEZ_EXEC_INPLACE_PROGRESS);
     boolean wideTerminal = false;
     boolean isTerminal = inPlaceUpdates == true ? isUnixTerminal() : false;
@@ -391,6 +401,7 @@ public class TezJobMonitor {
           if (rc != 0 && status != null) {
             for (String diag : status.getDiagnostics()) {
               console.printError(diag);
+              diagnostics.append(diag);
             }
           }
           shutdownList.remove(dagClient);
@@ -485,7 +496,7 @@ public class TezJobMonitor {
       if (progress != null) {
         final int totalTasks = progress.getTotalTaskCount();
         final int failedTaskAttempts = progress.getFailedTaskAttemptCount();
-        final int killedTasks = progress.getKilledTaskCount();
+        final int killedTaskAttempts = progress.getKilledTaskAttemptCount();
         final double duration =
             perfLogger.getDuration(PerfLogger.TEZ_RUN_VERTEX + vertexName) / 1000.0;
         VertexStatus vertexStatus = null;
@@ -572,7 +583,7 @@ public class TezJobMonitor {
             vertexName,
             totalTasks,
             failedTaskAttempts,
-            killedTasks,
+            killedTaskAttempts,
             secondsFormat.format((duration)),
             commaFormat.format(cpuTimeMillis),
             commaFormat.format(gcTimeMillis),
@@ -612,7 +623,7 @@ public class TezJobMonitor {
       final int failed = progress.getFailedTaskAttemptCount();
       final int pending = progress.getTotalTaskCount() - progress.getSucceededTaskCount() -
           progress.getRunningTaskCount();
-      final int killed = progress.getKilledTaskCount();
+      final int killed = progress.getKilledTaskAttemptCount();
 
       // To get vertex status we can use DAGClient.getVertexStatus(), but it will be expensive to
       // get status from AM for every refresh of the UI. Lets infer the state from task counts.
@@ -698,22 +709,25 @@ public class TezJobMonitor {
 
   // Map 1 ..........
   private String getNameWithProgress(String s, int complete, int total) {
-    float percent = total == 0 ? 0.0f : (float) complete / (float) total;
-    // lets use the remaining space in column 1 as progress bar
-    int spaceRemaining = COLUMN_1_WIDTH - s.length() - 1;
-    String trimmedVName = s;
+    String result = "";
+    if (s != null) {
+      float percent = total == 0 ? 0.0f : (float) complete / (float) total;
+      // lets use the remaining space in column 1 as progress bar
+      int spaceRemaining = COLUMN_1_WIDTH - s.length() - 1;
+      String trimmedVName = s;
 
-    // if the vertex name is longer than column 1 width, trim it down
-    // "Tez Merge File Work" will become "Tez Merge File.."
-    if (s != null && s.length() > COLUMN_1_WIDTH) {
-      trimmedVName = s.substring(0, COLUMN_1_WIDTH - 1);
-      trimmedVName = trimmedVName + "..";
-    }
+      // if the vertex name is longer than column 1 width, trim it down
+      // "Tez Merge File Work" will become "Tez Merge File.."
+      if (s.length() > COLUMN_1_WIDTH) {
+        trimmedVName = s.substring(0, COLUMN_1_WIDTH - 1);
+        trimmedVName = trimmedVName + "..";
+      }
 
-    String result = trimmedVName + " ";
-    int toFill = (int) (spaceRemaining * percent);
-    for (int i = 0; i < toFill; i++) {
-      result += ".";
+      result = trimmedVName + " ";
+      int toFill = (int) (spaceRemaining * percent);
+      for (int i = 0; i < toFill; i++) {
+        result += ".";
+      }
     }
     return result;
   }
@@ -777,7 +791,7 @@ public class TezJobMonitor {
       final int running = progress.getRunningTaskCount();
       final int failed = progress.getFailedTaskAttemptCount();
       if (total <= 0) {
-        reportBuffer.append(String.format("%s: -/-\t", s, complete, total));
+        reportBuffer.append(String.format("%s: -/-\t", s));
       } else {
         if (complete == total && !completed.contains(s)) {
           completed.add(s);
@@ -792,11 +806,11 @@ public class TezJobMonitor {
           perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.TEZ_RUN_VERTEX + s);
         }
         if(complete < total && (complete > 0 || running > 0 || failed > 0)) {
-          
+
           if (!perfLogger.startTimeHasMethod(PerfLogger.TEZ_RUN_VERTEX + s)) {
             perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.TEZ_RUN_VERTEX + s);
           }
-          
+
           /* vertex is started, but not complete */
           if (failed > 0) {
             reportBuffer.append(String.format("%s: %d(+%d,-%d)/%d\t", s, complete, running, failed, total));
@@ -816,5 +830,9 @@ public class TezJobMonitor {
     }
 
     return reportBuffer.toString();
+  }
+
+  public String getDiagnostics() {
+    return diagnostics.toString();
   }
 }

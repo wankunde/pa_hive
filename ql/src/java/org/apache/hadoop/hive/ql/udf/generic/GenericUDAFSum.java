@@ -87,6 +87,29 @@ public class GenericUDAFSum extends AbstractGenericUDAFResolver {
     }
   }
 
+  public static PrimitiveObjectInspector.PrimitiveCategory getReturnType(TypeInfo type) {
+    if (type.getCategory() != ObjectInspector.Category.PRIMITIVE) {
+      return null;
+    }
+    switch (((PrimitiveTypeInfo) type).getPrimitiveCategory()) {
+      case BYTE:
+      case SHORT:
+      case INT:
+      case LONG:
+        return PrimitiveObjectInspector.PrimitiveCategory.LONG;
+      case TIMESTAMP:
+      case FLOAT:
+      case DOUBLE:
+      case STRING:
+      case VARCHAR:
+      case CHAR:
+        return PrimitiveObjectInspector.PrimitiveCategory.DOUBLE;
+      case DECIMAL:
+        return PrimitiveObjectInspector.PrimitiveCategory.DECIMAL;
+    }
+    return null;
+  }
+
   /**
    * GenericUDAFSumHiveDecimal.
    *
@@ -182,9 +205,13 @@ public class GenericUDAFSum extends AbstractGenericUDAFResolver {
     }
 
     @Override
-    public GenericUDAFEvaluator getWindowingEvaluator(WindowFrameDef wFrameDef) {
+    public GenericUDAFEvaluator getWindowingEvaluator(WindowFrameDef wFrmDef) {
+
+      BoundaryDef start = wFrmDef.getStart();
+      BoundaryDef end = wFrmDef.getEnd();
+
       return new GenericUDAFStreamingEvaluator.SumAvgEnhancer<HiveDecimalWritable, HiveDecimal>(
-          this, wFrameDef) {
+          this, start.getAmt(), end.getAmt()) {
 
         @Override
         protected HiveDecimalWritable getNextResult(
@@ -192,8 +219,10 @@ public class GenericUDAFSum extends AbstractGenericUDAFResolver {
             throws HiveException {
           SumHiveDecimalAgg myagg = (SumHiveDecimalAgg) ss.wrappedBuf;
           HiveDecimal r = myagg.empty ? null : myagg.sum;
-          HiveDecimal d = ss.retrieveNextIntermediateValue();
-          if (d != null ) {
+          if (ss.numPreceding != BoundarySpec.UNBOUNDED_AMOUNT
+              && (ss.numRows - ss.numFollowing) >= (ss.numPreceding + 1)) {
+            HiveDecimal d = (HiveDecimal) ss.intermediateVals.remove(0);
+            d = d == null ? HiveDecimal.ZERO : d;
             r = r == null ? null : r.subtract(d);
           }
 
@@ -296,9 +325,12 @@ public class GenericUDAFSum extends AbstractGenericUDAFResolver {
     }
 
     @Override
-    public GenericUDAFEvaluator getWindowingEvaluator(WindowFrameDef wFrameDef) {
+    public GenericUDAFEvaluator getWindowingEvaluator(WindowFrameDef wFrmDef) {
+      BoundaryDef start = wFrmDef.getStart();
+      BoundaryDef end = wFrmDef.getEnd();
+
       return new GenericUDAFStreamingEvaluator.SumAvgEnhancer<DoubleWritable, Double>(this,
-          wFrameDef) {
+          start.getAmt(), end.getAmt()) {
 
         @Override
         protected DoubleWritable getNextResult(
@@ -306,8 +338,10 @@ public class GenericUDAFSum extends AbstractGenericUDAFResolver {
             throws HiveException {
           SumDoubleAgg myagg = (SumDoubleAgg) ss.wrappedBuf;
           Double r = myagg.empty ? null : myagg.sum;
-          Double d = ss.retrieveNextIntermediateValue();
-          if (d != null) {
+          if (ss.numPreceding != BoundarySpec.UNBOUNDED_AMOUNT
+              && (ss.numRows - ss.numFollowing) >= (ss.numPreceding + 1)) {
+            Double d = (Double) ss.intermediateVals.remove(0);
+            d = d == null ? 0.0 : d;
             r = r == null ? null : r - d;
           }
 
@@ -408,9 +442,13 @@ public class GenericUDAFSum extends AbstractGenericUDAFResolver {
     }
 
     @Override
-    public GenericUDAFEvaluator getWindowingEvaluator(WindowFrameDef wFrameDef) {
+    public GenericUDAFEvaluator getWindowingEvaluator(WindowFrameDef wFrmDef) {
+
+      BoundaryDef start = wFrmDef.getStart();
+      BoundaryDef end = wFrmDef.getEnd();
+
       return new GenericUDAFStreamingEvaluator.SumAvgEnhancer<LongWritable, Long>(this,
-          wFrameDef) {
+          start.getAmt(), end.getAmt()) {
 
         @Override
         protected LongWritable getNextResult(
@@ -418,8 +456,10 @@ public class GenericUDAFSum extends AbstractGenericUDAFResolver {
             throws HiveException {
           SumLongAgg myagg = (SumLongAgg) ss.wrappedBuf;
           Long r = myagg.empty ? null : myagg.sum;
-          Long d = ss.retrieveNextIntermediateValue();
-          if (d != null) {
+          if (ss.numPreceding != BoundarySpec.UNBOUNDED_AMOUNT
+              && (ss.numRows - ss.numFollowing) >= (ss.numPreceding + 1)) {
+            Long d = (Long) ss.intermediateVals.remove(0);
+            d = d == null ? 0 : d;
             r = r == null ? null : r - d;
           }
 

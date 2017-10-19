@@ -40,7 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.security.auth.login.LoginException;
 
@@ -48,12 +47,14 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.common.ObjectPair;
 import org.apache.hadoop.hive.common.ValidTxnList;
+import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience.Public;
 import org.apache.hadoop.hive.common.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.conf.HiveConfUtil;
 import org.apache.hadoop.hive.metastore.api.AbortTxnRequest;
+import org.apache.hadoop.hive.metastore.api.AddDynamicPartitions;
 import org.apache.hadoop.hive.metastore.api.AddPartitionsRequest;
 import org.apache.hadoop.hive.metastore.api.AddPartitionsResult;
 import org.apache.hadoop.hive.metastore.api.AggrStats;
@@ -71,8 +72,9 @@ import org.apache.hadoop.hive.metastore.api.DropPartitionsExpr;
 import org.apache.hadoop.hive.metastore.api.DropPartitionsRequest;
 import org.apache.hadoop.hive.metastore.api.EnvironmentContext;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
+import org.apache.hadoop.hive.metastore.api.FireEventRequest;
+import org.apache.hadoop.hive.metastore.api.FireEventResponse;
 import org.apache.hadoop.hive.metastore.api.Function;
-import org.apache.hadoop.hive.metastore.api.GetAllFunctionsResponse;
 import org.apache.hadoop.hive.metastore.api.GetOpenTxnsInfoResponse;
 import org.apache.hadoop.hive.metastore.api.GetPrincipalsInRoleRequest;
 import org.apache.hadoop.hive.metastore.api.GetPrincipalsInRoleResponse;
@@ -150,6 +152,8 @@ import org.apache.thrift.transport.TTransportException;
  * Hive Metastore Client.
  * The public implementation of IMetaStoreClient. Methods not inherited from IMetaStoreClient
  * are not public and can change. Hence this is marked as unstable.
+ * For users who require retry mechanism when the connection between metastore and client is
+ * broken, RetryingMetaStoreClient class should be used.
  */
 @Public
 @Unstable
@@ -165,8 +169,6 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
   private final MetaStoreFilterHook filterHook;
 
   private Map<String, String> currentMetaVars;
-
-  private static final AtomicInteger connCount = new AtomicInteger(0);
 
   // for thrift connects
   private int retries = 5;
@@ -417,7 +419,6 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
           client = new ThriftHiveMetastore.Client(protocol);
           try {
             transport.open();
-            LOG.info("Opened a connection to metastore, current connections: " + connCount.incrementAndGet());
             isConnected = true;
           } catch (TTransportException e) {
             tte = e;
@@ -498,7 +499,6 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     // just in case, we make this call.
     if ((transport != null) && transport.isOpen()) {
       transport.close();
-      LOG.info("Closed a connection to metastore, current connections: " + connCount.decrementAndGet());
     }
   }
 
@@ -739,7 +739,6 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     client.drop_database(name, deleteData, cascade);
   }
 
-
   /**
    * @param tbl_name
    * @param db_name
@@ -773,6 +772,15 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     warehouseOptions.put("ifPurge", "TRUE");
     return new EnvironmentContext(warehouseOptions);
   }
+
+  /*
+  public boolean dropPartition(String dbName, String tableName, String partName, boolean deleteData, boolean ifPurge)
+      throws NoSuchObjectException, MetaException, TException {
+
+    return dropPartition(dbName, tableName, partName, deleteData,
+                         ifPurge? getEnvironmentContextWithIfPurgeSet() : null);
+  }
+  */
 
   public boolean dropPartition(String dbName, String tableName, String partName, boolean deleteData,
       EnvironmentContext envContext) throws NoSuchObjectException, MetaException, TException {
@@ -830,7 +838,7 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     DropPartitionsRequest req = new DropPartitionsRequest(dbName, tblName, rps);
     req.setDeleteData(options.deleteData);
     req.setIgnoreProtection(options.ignoreProtection);
-    req.setNeedResult(true);
+    req.setNeedResult(options.returnResults);
     req.setIfExists(options.ifExists);
     if (options.purgeData) {
       LOG.info("Dropped partitions will be purged!");
@@ -1782,18 +1790,17 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
   @Override
   public String getDelegationToken(String owner, String renewerKerberosPrincipalName) throws
   MetaException, TException {
-    if(localMetaStore) {
-      throw new UnsupportedOperationException("getDelegationToken() can be " +
-          "called only in thrift (non local) mode");
+    // This is expected to be a no-op, so we will return null when we use local metastore.
+    if (localMetaStore) {
+      return null;
     }
     return client.get_delegation_token(owner, renewerKerberosPrincipalName);
   }
 
   @Override
   public long renewDelegationToken(String tokenStrForm) throws MetaException, TException {
-    if(localMetaStore) {
-      throw new UnsupportedOperationException("renewDelegationToken() can be " +
-          "called only in thrift (non local) mode");
+    if (localMetaStore) {
+      return 0;
     }
     return client.renew_delegation_token(tokenStrForm);
 
@@ -1801,9 +1808,8 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
 
   @Override
   public void cancelDelegationToken(String tokenStrForm) throws MetaException, TException {
-    if(localMetaStore) {
-      throw new UnsupportedOperationException("renewDelegationToken() can be " +
-          "called only in thrift (non local) mode");
+    if (localMetaStore) {
+      return;
     }
     client.cancel_delegation_token(tokenStrForm);
   }
@@ -1911,6 +1917,13 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
   }
 
   @Override
+  public void addDynamicPartitions(long txnId, String dbName, String tableName,
+                                   List<String> partNames) throws TException {
+    client.add_dynamic_partitions(new AddDynamicPartitions(txnId, dbName, tableName, partNames));
+  }
+
+  @InterfaceAudience.LimitedPrivate({"HCatalog"})
+  @Override
   public NotificationEventResponse getNextNotification(long lastEventId, int maxEvents,
                                                        NotificationFilter filter) throws TException {
     NotificationEventRequest rqst = new NotificationEventRequest(lastEventId);
@@ -1930,9 +1943,16 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     }
   }
 
+  @InterfaceAudience.LimitedPrivate({"HCatalog"})
   @Override
   public CurrentNotificationEventId getCurrentNotificationEventId() throws TException {
     return client.get_current_notificationEventId();
+  }
+
+  @InterfaceAudience.LimitedPrivate({"Apache Hive, HCatalog"})
+  @Override
+  public FireEventResponse fireListenerEvent(FireEventRequest rqst) throws TException {
+    return client.fire_listener_event(rqst);
   }
 
   /**
@@ -1954,16 +1974,19 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
 
   private static class SynchronizedHandler implements InvocationHandler {
     private final IMetaStoreClient client;
+    private static final Object lock = SynchronizedHandler.class;
 
     SynchronizedHandler(IMetaStoreClient client) {
       this.client = client;
     }
 
     @Override
-    public synchronized Object invoke(Object proxy, Method method, Object [] args)
+    public Object invoke(Object proxy, Method method, Object [] args)
         throws Throwable {
       try {
-        return method.invoke(client, args);
+        synchronized (lock) {
+          return method.invoke(client, args);
+        }
       } catch (InvocationTargetException e) {
         throw e.getTargetException();
       }
@@ -2022,12 +2045,6 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     return client.get_functions(dbName, pattern);
   }
 
-  @Override
-  public GetAllFunctionsResponse getAllFunctions()
-          throws MetaException, TException {
-    return client.get_all_functions();
-  }
-
   protected void create_table_with_environment_context(Table tbl, EnvironmentContext envContext)
       throws AlreadyExistsException, InvalidObjectException,
       MetaException, NoSuchObjectException, TException {
@@ -2043,6 +2060,10 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
   @Override
   public AggrStats getAggrColStatsFor(String dbName, String tblName,
     List<String> colNames, List<String> partNames) throws NoSuchObjectException, MetaException, TException {
+    if (colNames.isEmpty() || partNames.isEmpty()) {
+      LOG.debug("Columns is empty or partNames is empty : Short-circuiting stats eval on client side.");
+      return new AggrStats(new ArrayList<ColumnStatisticsObj>(),0); // Nothing to aggregate
+    }
     PartitionsStatsRequest req = new PartitionsStatsRequest(dbName, tblName, colNames, partNames);
     return client.get_aggr_stats_for(req);
   }

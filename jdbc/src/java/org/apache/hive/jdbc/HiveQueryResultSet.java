@@ -38,8 +38,6 @@ import org.apache.hive.service.cli.RowSetFactory;
 import org.apache.hive.service.cli.TableSchema;
 import org.apache.hive.service.cli.thrift.TCLIService;
 import org.apache.hive.service.cli.thrift.TCLIServiceConstants;
-import org.apache.hive.service.cli.thrift.TCloseOperationReq;
-import org.apache.hive.service.cli.thrift.TCloseOperationResp;
 import org.apache.hive.service.cli.thrift.TColumnDesc;
 import org.apache.hive.service.cli.thrift.TFetchOrientation;
 import org.apache.hive.service.cli.thrift.TFetchResultsReq;
@@ -78,6 +76,8 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
   private boolean fetchFirst = false;
 
   private final TProtocolVersion protocol;
+  private ReentrantLock transportLock;
+
 
   public static class Builder {
 
@@ -189,6 +189,7 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
     this.stmtHandle = builder.stmtHandle;
     this.sessHandle = builder.sessHandle;
     this.fetchSize = builder.fetchSize;
+    this.transportLock = builder.transportLock;
     columnNames = new ArrayList<String>();
     normalizedColumnNames = new ArrayList<String>();
     columnTypes = new ArrayList<String>();
@@ -249,7 +250,16 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
       TGetResultSetMetadataReq metadataReq = new TGetResultSetMetadataReq(stmtHandle);
       // TODO need session handle
       TGetResultSetMetadataResp  metadataResp;
-      metadataResp = client.GetResultSetMetadata(metadataReq);
+      if (transportLock == null) {
+        metadataResp = client.GetResultSetMetadata(metadataReq);
+      } else {
+        transportLock.lock();
+        try {
+          metadataResp = client.GetResultSetMetadata(metadataReq);
+        } finally {
+          transportLock.unlock();
+        }
+      }
       Utils.verifySuccess(metadataResp.getStatus());
 
       StringBuilder namesSb = new StringBuilder();
@@ -306,30 +316,12 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
     if (this.statement != null && (this.statement instanceof HiveStatement)) {
       HiveStatement s = (HiveStatement) this.statement;
       s.closeClientOperation();
-    } else {
-      // for those stmtHandle passed from HiveDatabaseMetaData instead of Statement
-      closeOperationHandle(stmtHandle);
     }
-
     // Need reset during re-open when needed
     client = null;
     stmtHandle = null;
     sessHandle = null;
     isClosed = true;
-  }
-
-  private void closeOperationHandle(TOperationHandle stmtHandle) throws SQLException {
-    try {
-      if (stmtHandle != null) {
-        TCloseOperationReq closeReq = new TCloseOperationReq(stmtHandle);
-        TCloseOperationResp closeResp = client.CloseOperation(closeReq);
-        Utils.verifySuccessWithInfo(closeResp.getStatus());
-      }
-    } catch (SQLException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new SQLException(e.toString(), "08S01", e);
-    }
   }
 
   /**
@@ -360,7 +352,16 @@ public class HiveQueryResultSet extends HiveBaseResultSet {
         TFetchResultsReq fetchReq = new TFetchResultsReq(stmtHandle,
             orientation, fetchSize);
         TFetchResultsResp fetchResp;
-        fetchResp = client.FetchResults(fetchReq);
+        if (transportLock == null) {
+          fetchResp = client.FetchResults(fetchReq);
+        } else {
+          transportLock.lock();
+          try {
+            fetchResp = client.FetchResults(fetchReq);
+          } finally {
+            transportLock.unlock();
+          }
+        }
         Utils.verifySuccessWithInfo(fetchResp.getStatus());
 
         TRowSet results = fetchResp.getResults();

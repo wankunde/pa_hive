@@ -20,7 +20,6 @@ package org.apache.hadoop.hive.ql.optimizer;
 
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -77,10 +76,9 @@ import org.apache.hadoop.hive.ql.optimizer.GenMRProcContext.GenMRUnionCtx;
 import org.apache.hadoop.hive.ql.optimizer.GenMRProcContext.GenMapRedCtx;
 import org.apache.hadoop.hive.ql.optimizer.listbucketingpruner.ListBucketingPruner;
 import org.apache.hadoop.hive.ql.optimizer.ppr.PartitionPruner;
-import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer.tableSpec;
+import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer.TableSpec;
 import org.apache.hadoop.hive.ql.parse.ParseContext;
 import org.apache.hadoop.hive.ql.parse.PrunedPartitionList;
-import org.apache.hadoop.hive.ql.parse.QBParseInfo;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
 import org.apache.hadoop.hive.ql.plan.ConditionalResolverMergeFiles;
@@ -91,7 +89,7 @@ import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
 import org.apache.hadoop.hive.ql.plan.FetchWork;
 import org.apache.hadoop.hive.ql.plan.FileMergeDesc;
 import org.apache.hadoop.hive.ql.plan.FileSinkDesc;
-import org.apache.hadoop.hive.ql.plan.FilterDesc.sampleDesc;
+import org.apache.hadoop.hive.ql.plan.FilterDesc.SampleDesc;
 import org.apache.hadoop.hive.ql.plan.LoadFileDesc;
 import org.apache.hadoop.hive.ql.plan.MapWork;
 import org.apache.hadoop.hive.ql.plan.MapredLocalWork;
@@ -113,7 +111,6 @@ import org.apache.hadoop.hive.ql.stats.StatsFactory;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
 import org.apache.hadoop.mapred.InputFormat;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Interner;
 
 /**
@@ -588,7 +585,7 @@ public final class GenMapRedUtils {
       // Later the properties have to come from the partition as opposed
       // to from the table in order to support versioning.
       Path[] paths = null;
-      sampleDesc sampleDescr = parseCtx.getOpToSamplePruner().get(topOp);
+      SampleDesc sampleDescr = parseCtx.getOpToSamplePruner().get(topOp);
 
       // Lookup list bucketing pruner
       Map<String, ExprNodeDesc> partToPruner = parseCtx.getOpToPartToSkewedPruner().get(topOp);
@@ -1232,13 +1229,16 @@ public final class GenMapRedUtils {
       ArrayList<ColumnInfo> signature = inputRS.getSignature();
       String tblAlias = fsInputDesc.getTableInfo().getTableName();
       LinkedHashMap<String, String> colMap = new LinkedHashMap<String, String>();
+      StringBuilder partCols = new StringBuilder();
       for (String dpCol : dpCtx.getDPColNames()) {
         ColumnInfo colInfo = new ColumnInfo(dpCol,
             TypeInfoFactory.stringTypeInfo, // all partition column type should be string
             tblAlias, true); // partition column is virtual column
         signature.add(colInfo);
         colMap.put(dpCol, dpCol); // input and output have the same column name
+        partCols.append(dpCol).append('/');
       }
+      partCols.setLength(partCols.length() - 1); // remove the last '/'
       inputRS.setSignature(signature);
 
       // create another DynamicPartitionCtx, which has a different input-to-DP column mapping
@@ -1247,7 +1247,9 @@ public final class GenMapRedUtils {
       fsOutputDesc.setDynPartCtx(dpCtx2);
 
       // update the FileSinkOperator to include partition columns
-      usePartitionColumns(fsInputDesc.getTableInfo().getProperties(), dpCtx.getDPColNames());
+      fsInputDesc.getTableInfo().getProperties().setProperty(
+        org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_PARTITION_COLUMNS,
+        partCols.toString()); // list of dynamic partition column names
     } else {
       // non-partitioned table
       fsInputDesc.getTableInfo().getProperties().remove(
@@ -1463,7 +1465,7 @@ public final class GenMapRedUtils {
    */
   public static boolean isInsertInto(ParseContext parseCtx, FileSinkOperator fsOp) {
     return fsOp.getConf().getTableInfo().getTableName() != null &&
-        parseCtx.getQB().getParseInfo().isInsertToTable();
+        parseCtx.getQueryProperties().isInsertToTable();
   }
 
   /**
@@ -1785,52 +1787,53 @@ public final class GenMapRedUtils {
     return dest;
   }
 
-  public static Set<Partition> getConfirmedPartitionsForScan(QBParseInfo parseInfo) {
+  public static Set<Partition> getConfirmedPartitionsForScan(TableScanOperator tableScanOp) {
     Set<Partition> confirmedPartns = new HashSet<Partition>();
-    tableSpec tblSpec = parseInfo.getTableSpec();
-    if (tblSpec.specType == tableSpec.SpecType.STATIC_PARTITION) {
+    TableSpec tblSpec = tableScanOp.getConf().getTableMetadata().getTableSpec();
+    if (tblSpec.specType == TableSpec.SpecType.STATIC_PARTITION) {
       // static partition
       if (tblSpec.partHandle != null) {
         confirmedPartns.add(tblSpec.partHandle);
       } else {
         // partial partition spec has null partHandle
-        assert parseInfo.isNoScanAnalyzeCommand();
         confirmedPartns.addAll(tblSpec.partitions);
       }
-    } else if (tblSpec.specType == tableSpec.SpecType.DYNAMIC_PARTITION) {
+    } else if (tblSpec.specType == TableSpec.SpecType.DYNAMIC_PARTITION) {
       // dynamic partition
       confirmedPartns.addAll(tblSpec.partitions);
     }
     return confirmedPartns;
   }
 
-  public static List<String> getPartitionColumns(QBParseInfo parseInfo) {
-    tableSpec tblSpec = parseInfo.getTableSpec();
+  public static List<String> getPartitionColumns(TableScanOperator tableScanOp) {
+    TableSpec tblSpec = tableScanOp.getConf().getTableMetadata().getTableSpec();
     if (tblSpec.tableHandle.isPartitioned()) {
       return new ArrayList<String>(tblSpec.getPartSpec().keySet());
     }
     return Collections.emptyList();
   }
 
-  public static List<Path> getInputPathsForPartialScan(QBParseInfo parseInfo, StringBuffer aggregationKey)
-    throws SemanticException {
+  public static List<Path> getInputPathsForPartialScan(TableScanOperator tableScanOp,
+          StringBuffer aggregationKey) throws SemanticException {
     List<Path> inputPaths = new ArrayList<Path>();
-    switch (parseInfo.getTableSpec().specType) {
-    case TABLE_ONLY:
-      inputPaths.add(parseInfo.getTableSpec().tableHandle.getPath());
-      break;
-    case STATIC_PARTITION:
-      Partition part = parseInfo.getTableSpec().partHandle;
-      try {
-        aggregationKey.append(Warehouse.makePartPath(part.getSpec()));
-      } catch (MetaException e) {
-        throw new SemanticException(ErrorMsg.ANALYZE_TABLE_PARTIALSCAN_AGGKEY.getMsg(
-            part.getDataLocation().toString() + e.getMessage()));
-      }
-      inputPaths.add(part.getDataLocation());
-      break;
-    default:
-      assert false;
+    switch (tableScanOp.getConf().getTableMetadata().getTableSpec().specType) {
+      case TABLE_ONLY:
+        inputPaths.add(tableScanOp.getConf().getTableMetadata()
+                .getTableSpec().tableHandle.getPath());
+        break;
+      case STATIC_PARTITION:
+        Partition part = tableScanOp.getConf().getTableMetadata()
+                .getTableSpec().partHandle;
+        try {
+          aggregationKey.append(Warehouse.makePartPath(part.getSpec()));
+        } catch (MetaException e) {
+          throw new SemanticException(ErrorMsg.ANALYZE_TABLE_PARTIALSCAN_AGGKEY.getMsg(
+              part.getDataLocation().toString() + e.getMessage()));
+        }
+        inputPaths.add(part.getDataLocation());
+        break;
+      default:
+        assert false;
     }
     return inputPaths;
   }
@@ -1867,55 +1870,7 @@ public final class GenMapRedUtils {
     }
     return null;
   }
-  /**
-   * Uses only specified partition columns.
-   * Provided properties should be pre-populated with partition column names and types.
-   * This function retains only information related to the columns from the list.
-   * @param properties properties to update
-   * @param partColNames list of columns to use
-   */
-  static void usePartitionColumns(Properties properties, List<String> partColNames) {
-    Preconditions.checkArgument(!partColNames.isEmpty(), "No partition columns provided to use");
-    Preconditions.checkArgument(new HashSet<String>(partColNames).size() == partColNames.size(),
-        "Partition columns should be unique: " + partColNames);
 
-    String[] partNames = properties.getProperty(
-        org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_PARTITION_COLUMNS)
-        .split("/");
-    String[] partTypes = properties.getProperty(
-        org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_PARTITION_COLUMN_TYPES)
-        .split(":");
-    Preconditions.checkArgument(partNames.length == partTypes.length,
-        "Partition Names, " + Arrays.toString(partNames) + " don't match partition Types, "
-        + Arrays.toString(partTypes));
-
-    Map<String, String> typeMap = new HashMap();
-    for (int i = 0; i < partNames.length; i++) {
-      String previousValue = typeMap.put(partNames[i], partTypes[i]);
-      Preconditions.checkArgument(previousValue == null, "Partition columns configuration is inconsistent. "
-          + "There are duplicates in partition column names: " + partNames);
-    }
-
-    StringBuilder partNamesBuf = new StringBuilder();
-    StringBuilder partTypesBuf = new StringBuilder();
-    for (String partName : partColNames) {
-      partNamesBuf.append(partName).append('/');
-      String partType = typeMap.get(partName);
-      if (partType == null) {
-        throw new RuntimeException("Type information for partition column " + partName + " is missing.");
-      }
-      partTypesBuf.append(partType).append(':');
-    }
-    partNamesBuf.setLength(partNamesBuf.length() - 1);
-    partTypesBuf.setLength(partTypesBuf.length() - 1);
-
-    properties.setProperty(
-        org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_PARTITION_COLUMNS,
-        partNamesBuf.toString());
-    properties.setProperty(
-        org.apache.hadoop.hive.metastore.api.hive_metastoreConstants.META_TABLE_PARTITION_COLUMN_TYPES,
-        partTypesBuf.toString());
-  }
   private GenMapRedUtils() {
     // prevent instantiation
   }

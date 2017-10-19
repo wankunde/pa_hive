@@ -22,6 +22,7 @@
 
 # define necessary env vars here and source it in other files
 
+#todo: most of these variables are defined in pom.xml - see this can be integrated
 echo ${HADOOP_VERSION};
 
 if [ -z ${HADOOP_VERSION} ]; then
@@ -34,6 +35,10 @@ fi
 
 if [ -z ${PIG_VERSION} ]; then
   export PIG_VERSION=0.12.2-SNAPSHOT
+fi
+
+if [ -z ${TEZ_VERSION} ]; then
+  export TEZ_VERSION=0.5.3
 fi
 
 #Root of project source tree
@@ -51,6 +56,7 @@ if [ -z ${MYSQL_CLIENT_JAR} ]; then
   export MYSQL_CLIENT_JAR=/Users/${USER}/dev/mysql-connector-java-5.1.30/mysql-connector-java-5.1.30-bin.jar
 fi
 
+export TEZ_CLIENT_HOME=/Users/ekoifman/dev/apache-tez-client-${TEZ_VERSION}
 #Make sure Pig is built for the Hadoop version you are running
 export PIG_TAR_PATH=/Users/${USER}/dev/pig-${PIG_VERSION}-src/build
 #this is part of Pig distribution
@@ -60,3 +66,4 @@ export WEBHCAT_LOG_DIR=/tmp/webhcat_e2e/logs
 export WEBHCAT_PID_DIR=${WEBHCAT_LOG_DIR}
 #config/hive/hive-site.xml should match this path - it doesn't understand env vars
 export METASTORE_DB=${WEBHCAT_LOG_DIR}/wehcat_e2e_metastore_db
+export CONF_BACKUP=/Users/${USER}/tmp

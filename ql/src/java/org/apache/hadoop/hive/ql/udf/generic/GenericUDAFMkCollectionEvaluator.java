@@ -25,9 +25,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 
 import org.apache.hadoop.hive.ql.metadata.HiveException;
+import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorUtils;
+import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StandardListObjectInspector;
 
 public class GenericUDAFMkCollectionEvaluator extends GenericUDAFEvaluator
@@ -38,12 +40,12 @@ public class GenericUDAFMkCollectionEvaluator extends GenericUDAFEvaluator
   enum BufferType { SET, LIST }
 
   // For PARTIAL1 and COMPLETE: ObjectInspectors for original data
-  private transient ObjectInspector inputOI;
+  private transient PrimitiveObjectInspector inputOI;
   // For PARTIAL2 and FINAL: ObjectInspectors for partial aggregations (list
   // of objs)
   private transient StandardListObjectInspector loi;
 
-  private transient StandardListObjectInspector internalMergeOI;
+  private transient ListObjectInspector internalMergeOI;
 
   private BufferType bufferType;
 
@@ -62,17 +64,20 @@ public class GenericUDAFMkCollectionEvaluator extends GenericUDAFEvaluator
     // init output object inspectors
     // The output of a partial aggregation is a list
     if (m == Mode.PARTIAL1) {
-      inputOI = parameters[0];
-      return ObjectInspectorFactory.getStandardListObjectInspector(
-          ObjectInspectorUtils.getStandardObjectInspector(inputOI));
+      inputOI = (PrimitiveObjectInspector) parameters[0];
+      return ObjectInspectorFactory
+          .getStandardListObjectInspector((PrimitiveObjectInspector) ObjectInspectorUtils
+              .getStandardObjectInspector(inputOI));
     } else {
-      if (!(parameters[0] instanceof StandardListObjectInspector)) {
+      if (!(parameters[0] instanceof ListObjectInspector)) {
         //no map aggregation.
-        inputOI = ObjectInspectorUtils.getStandardObjectInspector(parameters[0]);
-        return ObjectInspectorFactory.getStandardListObjectInspector(inputOI);
+        inputOI = (PrimitiveObjectInspector)  ObjectInspectorUtils
+        .getStandardObjectInspector(parameters[0]);
+        return (StandardListObjectInspector) ObjectInspectorFactory
+            .getStandardListObjectInspector(inputOI);
       } else {
-        internalMergeOI = (StandardListObjectInspector) parameters[0];
-        inputOI = internalMergeOI.getListElementObjectInspector();
+        internalMergeOI = (ListObjectInspector) parameters[0];
+        inputOI = (PrimitiveObjectInspector) internalMergeOI.getListElementObjectInspector();
         loi = (StandardListObjectInspector) ObjectInspectorUtils.getStandardObjectInspector(internalMergeOI);
         return loi;
       }

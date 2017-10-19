@@ -35,6 +35,8 @@ import org.apache.hadoop.hive.ql.exec.Utilities;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.metadata.InvalidTableException;
 import org.apache.hadoop.hive.ql.metadata.Table;
+import org.apache.hadoop.hive.ql.session.SessionState;
+import org.apache.hadoop.hive.serde.serdeConstants;
 
 /**
  * ColumnStatsSemanticAnalyzer.
@@ -94,34 +96,18 @@ public class ColumnStatsSemanticAnalyzer extends SemanticAnalyzer {
 
   private Table getTable(ASTNode tree) throws SemanticException {
     String tableName = getUnescapedName((ASTNode) tree.getChild(0).getChild(0));
-    try {
-      return db.getTable(tableName);
-    } catch (InvalidTableException e) {
-      throw new SemanticException(ErrorMsg.INVALID_TABLE.getMsg(tableName), e);
-    } catch (HiveException e) {
-      throw new SemanticException(e.getMessage(), e);
-    }
+    String currentDb = SessionState.get().getCurrentDatabase();
+    String [] names = Utilities.getDbTableName(currentDb, tableName);
+    return getTable(names[0], names[1], true);
   }
 
-  private Map<String,String> getPartKeyValuePairsFromAST(ASTNode tree) {
+  private Map<String,String> getPartKeyValuePairsFromAST(Table tbl, ASTNode tree,
+      HiveConf hiveConf) throws SemanticException {
     ASTNode child = ((ASTNode) tree.getChild(0).getChild(1));
     Map<String,String> partSpec = new HashMap<String, String>();
-    if (null == child) {
-      // case of analyze table T compute statistics for columns;
-      return partSpec;
-    }
-    String partKey;
-    String partValue;
-    for (int i = 0; i < child.getChildCount(); i++) {
-      partKey = new String(getUnescapedName((ASTNode) child.getChild(i).getChild(0))).toLowerCase();
-      if (child.getChild(i).getChildCount() > 1) {
-        partValue = new String(getUnescapedName((ASTNode) child.getChild(i).getChild(1)));
-        partValue = partValue.replaceAll("'", "");
-      } else {
-        partValue = null;
-      }
-      partSpec.put(partKey, partValue);
-    }
+    if (child != null) {
+      partSpec = DDLSemanticAnalyzer.getValidatedPartSpec(tbl, child, hiveConf, false);
+    } //otherwise, it is the case of analyze table T compute statistics for columns;
     return partSpec;
   }
 
@@ -189,15 +175,7 @@ public class ColumnStatsSemanticAnalyzer extends SemanticAnalyzer {
         } else {
           whereClause.append(" and ");
         }
-        whereClause.append(partKey);
-        whereClause.append(" = ");
-        if (getColTypeOf(partKey).equalsIgnoreCase("string")) {
-          whereClause.append("'");
-        }
-        whereClause.append(value);
-        if (getColTypeOf(partKey).equalsIgnoreCase("string")) {
-          whereClause.append("'");
-        }
+        whereClause.append(partKey).append(" = ").append(genPartValueString(partKey, value));
       }
     }
 
@@ -214,11 +192,39 @@ public class ColumnStatsSemanticAnalyzer extends SemanticAnalyzer {
     return predPresent ? whereClause.append(groupByClause) : groupByClause;
   }
 
+  private String genPartValueString (String partKey, String partVal) throws SemanticException {
+    String returnVal = partVal;
+    String partColType = getColTypeOf(partKey);
+    if (partColType.equals(serdeConstants.STRING_TYPE_NAME) ||
+        partColType.contains(serdeConstants.VARCHAR_TYPE_NAME) ||
+        partColType.contains(serdeConstants.CHAR_TYPE_NAME)) {
+      returnVal = "'" + partVal + "'";
+    } else if (partColType.equals(serdeConstants.TINYINT_TYPE_NAME)) {
+      returnVal = partVal+"Y";
+    } else if (partColType.equals(serdeConstants.SMALLINT_TYPE_NAME)) {
+      returnVal = partVal+"S";
+    } else if (partColType.equals(serdeConstants.INT_TYPE_NAME)) {
+      returnVal = partVal;
+    } else if (partColType.equals(serdeConstants.BIGINT_TYPE_NAME)) {
+      returnVal = partVal+"L";
+    } else if (partColType.contains(serdeConstants.DECIMAL_TYPE_NAME)) {
+      returnVal = partVal + "BD";
+    } else if (partColType.equals(serdeConstants.DATE_TYPE_NAME) ||
+        partColType.equals(serdeConstants.TIMESTAMP_TYPE_NAME)) {
+      returnVal = partColType + " '" + partVal + "'";
+    } else {
+      //for other usually not used types, just quote the value
+      returnVal = "'" + partVal + "'";
+    }
+    
+    return returnVal;
+  }
+  
   private String getColTypeOf (String partKey) throws SemanticException{
 
     for (FieldSchema fs : tbl.getPartitionKeys()) {
       if (partKey.equalsIgnoreCase(fs.getName())) {
-        return fs.getType();
+        return fs.getType().toLowerCase();
       }
     }
     throw new SemanticException ("Unknown partition key : " + partKey);
@@ -315,6 +321,8 @@ public class ColumnStatsSemanticAnalyzer extends SemanticAnalyzer {
       }
     }
     rewrittenQueryBuilder.append(" from ");
+    rewrittenQueryBuilder.append(tbl.getDbName());
+    rewrittenQueryBuilder.append(".");
     rewrittenQueryBuilder.append(tbl.getTableName());
     isRewritten = true;
 
@@ -406,7 +414,7 @@ public class ColumnStatsSemanticAnalyzer extends SemanticAnalyzer {
 
       if (isPartitionStats) {
         isTableLevel = false;
-        partSpec = getPartKeyValuePairsFromAST(ast);
+        partSpec = getPartKeyValuePairsFromAST(tbl, ast, conf);
         handlePartialPartitionSpec(partSpec);
       } else {
         isTableLevel = true;
@@ -427,10 +435,12 @@ public class ColumnStatsSemanticAnalyzer extends SemanticAnalyzer {
       qb = getQB();
       qb.setAnalyzeRewrite(true);
       qbp = qb.getParseInfo();
-      qbp.setTableName(tbl.getTableName());
-      qbp.setTblLvl(isTableLevel);
-      qbp.setColName(colNames);
-      qbp.setColType(colType);
+      analyzeRewrite = new AnalyzeRewriteContext();
+      analyzeRewrite.setTableName(tbl.getDbName() + "." + tbl.getTableName());
+      analyzeRewrite.setTblLvl(isTableLevel);
+      analyzeRewrite.setColName(colNames);
+      analyzeRewrite.setColType(colType);
+      qbp.setAnalyzeRewrite(analyzeRewrite);
       initCtx(ctx);
       LOG.info("Invoking analyze on rewritten query");
       analyzeInternal(rewrittenTree);

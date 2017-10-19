@@ -24,7 +24,6 @@ import java.io.File;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.List;
-import java.util.Set;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
@@ -39,9 +38,9 @@ public class SparkClientUtilities {
   /**
    * Add new elements to the classpath.
    *
-   * @param newPaths Set of classpath elements
+   * @param newPaths Array of classpath elements
    */
-  public static void addToClassPath(Set<String> newPaths, Configuration conf, File localTmpDir)
+  public static void addToClassPath(String[] newPaths, Configuration conf, File localTmpDir)
       throws Exception {
     ClassLoader cloader = Thread.currentThread().getContextClassLoader();
     URLClassLoader loader = (URLClassLoader) cloader;
@@ -75,11 +74,9 @@ public class SparkClientUtilities {
         Path remoteFile = new Path(path);
         Path localFile =
             new Path(localTmpDir.getAbsolutePath() + File.separator + remoteFile.getName());
-        if (!new File(localFile.toString()).exists()) {
-          LOG.info("Copying " + remoteFile + " to " + localFile);
-          FileSystem remoteFS = remoteFile.getFileSystem(conf);
-          remoteFS.copyToLocalFile(remoteFile, localFile);
-        }
+        LOG.info("Copying " + remoteFile + " to " + localFile);
+        FileSystem fs = remoteFile.getFileSystem(conf);
+        fs.copyToLocalFile(remoteFile, localFile);
         return urlFromPathString(localFile.toString(), conf, localTmpDir);
       } else {
         url = new File(path).toURL();

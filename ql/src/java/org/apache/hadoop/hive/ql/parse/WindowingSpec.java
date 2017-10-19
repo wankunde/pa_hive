@@ -58,21 +58,20 @@ import org.apache.hadoop.hive.ql.parse.PTFInvocationSpec.PartitioningSpec;
  * building RowResolvers.
  */
 public class WindowingSpec {
-  private HashMap<String, WindowExpressionSpec> aliasToWdwExpr;
-  private HashMap<String, WindowSpec> windowSpecs;
-  private ArrayList<WindowExpressionSpec> windowExpressions;
-
-  public WindowingSpec() {
-    aliasToWdwExpr = new HashMap<String, WindowExpressionSpec>();
-    windowSpecs = new HashMap<String, WindowSpec>();
-    windowExpressions = new ArrayList<WindowExpressionSpec>();
-  }
+  HashMap<String, WindowExpressionSpec> aliasToWdwExpr;
+  HashMap<String, WindowSpec> windowSpecs;
+  ArrayList<WindowExpressionSpec> windowExpressions;
 
   public void addWindowSpec(String name, WindowSpec wdwSpec) {
+    windowSpecs = windowSpecs == null ? new HashMap<String, WindowSpec>() : windowSpecs;
     windowSpecs.put(name, wdwSpec);
   }
 
   public void addWindowFunction(WindowFunctionSpec wFn) {
+    windowExpressions = windowExpressions == null ?
+        new ArrayList<WindowExpressionSpec>() : windowExpressions;
+    aliasToWdwExpr = aliasToWdwExpr == null ?
+        new HashMap<String, WindowExpressionSpec>() : aliasToWdwExpr;
     windowExpressions.add(wFn);
     aliasToWdwExpr.put(wFn.getAlias(), wFn);
   }
@@ -81,12 +80,24 @@ public class WindowingSpec {
     return aliasToWdwExpr;
   }
 
+  public void setAliasToWdwExpr(HashMap<String, WindowExpressionSpec> aliasToWdwExpr) {
+    this.aliasToWdwExpr = aliasToWdwExpr;
+  }
+
   public HashMap<String, WindowSpec> getWindowSpecs() {
     return windowSpecs;
   }
 
+  public void setWindowSpecs(HashMap<String, WindowSpec> windowSpecs) {
+    this.windowSpecs = windowSpecs;
+  }
+
   public ArrayList<WindowExpressionSpec> getWindowExpressions() {
     return windowExpressions;
+  }
+
+  public void setWindowExpressions(ArrayList<WindowExpressionSpec> windowExpressions) {
+    this.windowExpressions = windowExpressions;
   }
 
   public PartitioningSpec getQueryPartitioningSpec() {
@@ -134,7 +145,7 @@ public class WindowingSpec {
       }
 
       // 2. A Window Spec with no Parition Spec, is Partitioned on a Constant(number 0)
-      applyConstantPartition(wdwSpec);
+      applyContantPartition(wdwSpec);
 
       // 3. For missing Wdw Frames or for Frames with only a Start Boundary, completely
       //    specify them by the rules in {@link effectiveWindowFrame}
@@ -143,8 +154,8 @@ public class WindowingSpec {
       // 4. Validate the effective Window Frames with the rules in {@link validateWindowFrame}
       validateWindowFrame(wdwSpec);
 
-      // 5. Add the Partition expressions as the Order if there is no Order and validate Order spec.
-      setAndValidateOrderSpec(wdwSpec);
+      // 5. If there is no Order, then add the Partition expressions as the Order.
+      wdwSpec.ensureOrderSpec();
     }
   }
 
@@ -160,7 +171,7 @@ public class WindowingSpec {
       WindowSpec source = getWindowSpecs().get(sourceId);
       if (source == null || source.equals(dest))
       {
-        throw new SemanticException(String.format("%s refers to an unknown source" ,
+        throw new SemanticException(String.format("Window Spec %s refers to an unknown source " ,
             dest));
       }
 
@@ -185,7 +196,7 @@ public class WindowingSpec {
     }
   }
 
-  private void applyConstantPartition(WindowSpec wdwSpec) {
+  private void applyContantPartition(WindowSpec wdwSpec) {
     PartitionSpec partSpec = wdwSpec.getPartition();
     if ( partSpec == null ) {
       partSpec = new PartitionSpec();
@@ -263,39 +274,23 @@ public class WindowingSpec {
     }
 
     if ( end.getDirection() == Direction.PRECEDING &&
-        end.getAmt() == BoundarySpec.UNBOUNDED_AMOUNT ) {
+        start.getAmt() == BoundarySpec.UNBOUNDED_AMOUNT ) {
       throw new SemanticException("End of a WindowFrame cannot be UNBOUNDED PRECEDING");
     }
+
+    validateValueBoundary(wFrame.getStart(), wdwSpec.getOrder());
+    validateValueBoundary(wFrame.getEnd(), wdwSpec.getOrder());
   }
 
-  /**
-   * Add default order spec if there is no order and validate order spec for valued based
-   * windowing since only one sort key is allowed.
-   * @param wdwSpec
-   * @throws SemanticException
-   */
-  private void setAndValidateOrderSpec(WindowSpec wdwSpec) throws SemanticException {
-    wdwSpec.ensureOrderSpec();
-
-    WindowFrameSpec wFrame = wdwSpec.getWindowFrame();
-    OrderSpec order = wdwSpec.getOrder();
-
-    BoundarySpec start = wFrame.getStart();
-    BoundarySpec end = wFrame.getEnd();
-
-    if (start instanceof ValueBoundarySpec || end instanceof ValueBoundarySpec) {
+  private void validateValueBoundary(BoundarySpec bs, OrderSpec order) throws SemanticException {
+    if ( bs instanceof ValueBoundarySpec ) {
+      ValueBoundarySpec vbs = (ValueBoundarySpec) bs;
       if ( order != null ) {
         if ( order.getExpressions().size() > 1 ) {
           throw new SemanticException("Range based Window Frame can have only 1 Sort Key");
         }
-
-        if (start instanceof ValueBoundarySpec) {
-          ((ValueBoundarySpec)start).setExpression(order.getExpressions().get(0).getExpression());
-        }
-        if (end instanceof ValueBoundarySpec) {
-          ((ValueBoundarySpec)end).setExpression(order.getExpressions().get(0).getExpression());
-        }
       }
+      vbs.setExpression(order.getExpressions().get(0).getExpression());
     }
   }
 
@@ -434,10 +429,9 @@ public class WindowingSpec {
    */
   public static class WindowSpec
   {
-    private String sourceId;
-    private PartitioningSpec partitioning;
-    private WindowFrameSpec windowFrame;
-
+    String sourceId;
+    PartitioningSpec partitioning;
+    WindowFrameSpec windowFrame;
     public String getSourceId() {
       return sourceId;
     }
@@ -485,14 +479,6 @@ public class WindowingSpec {
         order.prefixBy(getPartition());
         setOrder(order);
       }
-    }
-
-    @Override
-    public String toString() {
-      return String.format("Window Spec=[%s%s%s]",
-          sourceId == null ? "" : "Name='" + sourceId + "'",
-          partitioning == null ? "" : partitioning,
-          windowFrame == null ? "" : windowFrame);
     }
   };
 
@@ -628,10 +614,8 @@ public class WindowingSpec {
       if (c != 0) {
         return c;
       }
-
       RangeBoundarySpec rb = (RangeBoundarySpec) other;
-      // Valid range is "range/rows between 10 preceding and 2 preceding" for preceding case
-      return this.direction == Direction.PRECEDING ? rb.amt - amt : amt - rb.amt;
+      return amt - rb.amt;
     }
 
   }
@@ -729,8 +713,7 @@ public class WindowingSpec {
         return c;
       }
       ValueBoundarySpec vb = (ValueBoundarySpec) other;
-      // Valid range is "range/rows between 10 preceding and 2 preceding" for preceding case
-      return this.direction == Direction.PRECEDING ? vb.amt - amt : amt - vb.amt;
+      return amt - vb.amt;
     }
 
   }

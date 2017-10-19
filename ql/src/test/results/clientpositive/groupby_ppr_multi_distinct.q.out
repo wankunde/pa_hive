@@ -1,12 +1,8 @@
-PREHOOK: query: -- SORT_QUERY_RESULTS
-
-CREATE TABLE dest1(key STRING, c1 INT, c2 STRING, c3 INT, c4 INT) STORED AS TEXTFILE
+PREHOOK: query: CREATE TABLE dest1(key STRING, c1 INT, c2 STRING, c3 INT, c4 INT) STORED AS TEXTFILE
 PREHOOK: type: CREATETABLE
 PREHOOK: Output: database:default
 PREHOOK: Output: default@dest1
-POSTHOOK: query: -- SORT_QUERY_RESULTS
-
-CREATE TABLE dest1(key STRING, c1 INT, c2 STRING, c3 INT, c4 INT) STORED AS TEXTFILE
+POSTHOOK: query: CREATE TABLE dest1(key STRING, c1 INT, c2 STRING, c3 INT, c4 INT) STORED AS TEXTFILE
 POSTHOOK: type: CREATETABLE
 POSTHOOK: Output: database:default
 POSTHOOK: Output: default@dest1
@@ -232,8 +228,8 @@ STAGE PLANS:
               name: default.srcpart
             name: default.srcpart
       Truncated Path -> Alias:
-        /srcpart/ds=2008-04-08/hr=11 [$hdt$_0:$hdt$_0:src]
-        /srcpart/ds=2008-04-08/hr=12 [$hdt$_0:$hdt$_0:src]
+        /srcpart/ds=2008-04-08/hr=11 [$hdt$_0:src]
+        /srcpart/ds=2008-04-08/hr=12 [$hdt$_0:src]
       Needs Tagging: false
       Reduce Operator Tree:
         Group By Operator

@@ -22,7 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.hadoop.hive.ql.metadata.HiveException;
-import org.apache.hadoop.hive.ql.plan.ptf.WindowFrameDef;
+import org.apache.hadoop.hive.ql.parse.WindowingSpec.BoundarySpec;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDAFEvaluator.AggregationBuffer;
 import org.apache.hadoop.hive.ql.util.JavaDataModel;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
@@ -32,22 +32,28 @@ public abstract class GenericUDAFStreamingEvaluator<T1> extends
     GenericUDAFEvaluator implements ISupportStreamingModeForWindowing {
 
   protected final GenericUDAFEvaluator wrappedEval;
-  protected final WindowFrameDef wFrameDef;
+  protected final int numPreceding;
+  protected final int numFollowing;
 
   public GenericUDAFStreamingEvaluator(GenericUDAFEvaluator wrappedEval,
-      WindowFrameDef wFrameDef) {
+      int numPreceding, int numFollowing) {
     this.wrappedEval = wrappedEval;
-    this.wFrameDef = wFrameDef;
+    this.numPreceding = numPreceding;
+    this.numFollowing = numFollowing;
     this.mode = wrappedEval.mode;
   }
 
   class StreamingState extends AbstractAggregationBuffer {
     final AggregationBuffer wrappedBuf;
-    final List<T1> results; // Hold the aggregation results for each row in the partition
-    int numRows;  // Number of rows processed in the partition.
+    final int numPreceding;
+    final int numFollowing;
+    final List<T1> results;
+    int numRows;
 
-    StreamingState(AggregationBuffer buf) {
+    StreamingState(int numPreceding, int numFollowing, AggregationBuffer buf) {
       this.wrappedBuf = buf;
+      this.numPreceding = numPreceding;
+      this.numFollowing = numFollowing;
       results = new ArrayList<T1>();
       numRows = 0;
     }
@@ -99,16 +105,18 @@ public abstract class GenericUDAFStreamingEvaluator<T1> extends
   public static abstract class SumAvgEnhancer<T1, T2> extends
       GenericUDAFStreamingEvaluator<T1> {
 
-    public SumAvgEnhancer(GenericUDAFEvaluator wrappedEval, WindowFrameDef wFrameDef) {
-      super(wrappedEval, wFrameDef);
+    public SumAvgEnhancer(GenericUDAFEvaluator wrappedEval, int numPreceding,
+        int numFollowing) {
+      super(wrappedEval, numPreceding, numFollowing);
     }
 
     class SumAvgStreamingState extends StreamingState {
 
-      final List<T2> intermediateVals;  // Keep track of S[0..x]
+      final List<T2> intermediateVals;
 
-      SumAvgStreamingState(AggregationBuffer buf) {
-        super(buf);
+      SumAvgStreamingState(int numPreceding, int numFollowing,
+          AggregationBuffer buf) {
+        super(numPreceding, numFollowing, buf);
         intermediateVals = new ArrayList<T2>();
       }
 
@@ -121,7 +129,7 @@ public abstract class GenericUDAFStreamingEvaluator<T1> extends
         if (underlying == -1) {
           return -1;
         }
-        if (wFrameDef.isStartUnbounded()) {
+        if (numPreceding == BoundarySpec.UNBOUNDED_AMOUNT) {
           return -1;
         }
         /*
@@ -130,7 +138,7 @@ public abstract class GenericUDAFStreamingEvaluator<T1> extends
          * of underlying * wdwSz sz of intermediates = sz of underlying * wdwSz
          */
 
-        int wdwSz = wFrameDef.getWindowSize();
+        int wdwSz = numPreceding + numFollowing + 1;
         return underlying + (underlying * wdwSz) + (underlying * wdwSz)
             + (3 * JavaDataModel.PRIMITIVES1);
       }
@@ -139,36 +147,12 @@ public abstract class GenericUDAFStreamingEvaluator<T1> extends
         intermediateVals.clear();
         super.reset();
       }
-
-      /**
-       * For the cases "X preceding and Y preceding" or the number of processed rows
-       * is more than the size of FOLLOWING window, we are able to generate a PTF result
-       * for a previous row.
-       * @return
-       */
-      public boolean hasResultReady() {
-        return this.numRows >= wFrameDef.getEnd().getRelativeOffset();
-      }
-
-      /**
-       * Retrieve the next stored intermediate result, i.e.,
-       * Get S[x-1] in the computation of S[x..y] = S[y] - S[x-1].
-       */
-      public T2 retrieveNextIntermediateValue() {
-        if (!wFrameDef.getStart().isUnbounded()
-            && !this.intermediateVals.isEmpty()
-            && this.numRows >= wFrameDef.getWindowSize()) {
-          return this.intermediateVals.remove(0);
-        }
-
-        return null;
-      }
     }
 
     @Override
     public AggregationBuffer getNewAggregationBuffer() throws HiveException {
       AggregationBuffer underlying = wrappedEval.getNewAggregationBuffer();
-      return new SumAvgStreamingState(underlying);
+      return new SumAvgStreamingState(numPreceding, numFollowing, underlying);
     }
 
     @Override
@@ -178,19 +162,10 @@ public abstract class GenericUDAFStreamingEvaluator<T1> extends
 
       wrappedEval.iterate(ss.wrappedBuf, parameters);
 
-      // We need to insert 'null' before processing first row for the case: X preceding and y preceding
-      if (ss.numRows == 0) {
-        for (int i = wFrameDef.getEnd().getRelativeOffset(); i < 0; i++) {
-          ss.results.add(null);
-        }
-      }
-
-      // Generate the result for the windowing ending at the current row
-      if (ss.hasResultReady()) {
+      if (ss.numRows >= ss.numFollowing) {
         ss.results.add(getNextResult(ss));
       }
-      if (!wFrameDef.isStartUnbounded()
-          && ss.numRows + 1 >= wFrameDef.getStart().getRelativeOffset()) {
+      if (ss.numPreceding != BoundarySpec.UNBOUNDED_AMOUNT) {
         ss.intermediateVals.add(getCurrentIntermediateResult(ss));
       }
 
@@ -202,18 +177,10 @@ public abstract class GenericUDAFStreamingEvaluator<T1> extends
       SumAvgStreamingState ss = (SumAvgStreamingState) agg;
       Object o = wrappedEval.terminate(ss.wrappedBuf);
 
-      // After all the rows are processed, continue to generate results for the rows that results haven't generated.
-      // For the case: X following and Y following, process first Y-X results and then insert X nulls.
-      // For the case X preceding and Y following, process Y results.
-      for (int i = Math.max(0, wFrameDef.getStart().getRelativeOffset()); i < wFrameDef.getEnd().getRelativeOffset(); i++) {
+      for (int i = 0; i < ss.numFollowing; i++) {
         ss.results.add(getNextResult(ss));
         ss.numRows++;
       }
-      for (int i = 0; i < wFrameDef.getStart().getRelativeOffset(); i++) {
-        ss.results.add(null);
-        ss.numRows++;
-      }
-
       return o;
     }
 

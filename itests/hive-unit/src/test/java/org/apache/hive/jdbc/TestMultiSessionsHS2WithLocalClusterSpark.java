@@ -38,6 +38,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hive.jdbc.miniHS2.MiniHS2;
+import org.apache.hive.jdbc.miniHS2.MiniHS2.MiniClusterType;
 import org.apache.hive.service.cli.HiveSQLException;
 import org.apache.hive.service.cli.session.HiveSessionHook;
 import org.apache.hive.service.cli.session.HiveSessionHookContext;
@@ -73,7 +74,6 @@ public class TestMultiSessionsHS2WithLocalClusterSpark {
 
   private static HiveConf createHiveConf() {
     HiveConf conf = new HiveConf();
-    conf.set("hive.enable.spark.execution.engine", "true");
     conf.set("hive.exec.parallel", "true");
     conf.set("hive.execution.engine", "spark");
     conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer");
@@ -92,7 +92,7 @@ public class TestMultiSessionsHS2WithLocalClusterSpark {
     dataFilePath = new Path(dataFileDir, "kv1.txt");
     DriverManager.setLoginTimeout(0);
     conf.setBoolVar(ConfVars.HIVE_SUPPORT_CONCURRENCY, false);
-    miniHS2 = new MiniHS2(conf, true);
+    miniHS2 = new MiniHS2(conf, MiniClusterType.MR);
     Map<String, String> overlayProps = new HashMap<String, String>();
     overlayProps.put(ConfVars.HIVE_SERVER2_SESSION_HOOK.varname,
       LocalClusterSparkSessionHook.class.getName());
@@ -101,7 +101,7 @@ public class TestMultiSessionsHS2WithLocalClusterSpark {
   }
 
   // setup DB
-  private static void createDb() throws SQLException {
+  private static void createDb() throws Exception {
     Connection conn = DriverManager.
       getConnection(miniHS2.getJdbcURL(), System.getProperty("user.name"), "bar");
     Statement stmt2 = conn.createStatement();
@@ -124,7 +124,7 @@ public class TestMultiSessionsHS2WithLocalClusterSpark {
     closeConnection();
   }
 
-  private void createConnection() throws SQLException {
+  private void createConnection() throws Exception {
     Connection connection = DriverManager.getConnection(miniHS2.getJdbcURL(dbName),
       System.getProperty("user.name"), "bar");
     Statement statement = connection.createStatement();
@@ -215,8 +215,7 @@ public class TestMultiSessionsHS2WithLocalClusterSpark {
     };
   }
 
-  private void testKvQuery(String queryStr, String resultVal)
-    throws SQLException {
+  private void testKvQuery(String queryStr, String resultVal) throws Exception {
     createConnection();
     verifyResult(queryStr, resultVal, 2);
     closeConnection();

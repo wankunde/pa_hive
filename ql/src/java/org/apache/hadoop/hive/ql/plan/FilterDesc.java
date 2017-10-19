@@ -19,19 +19,21 @@
 package org.apache.hadoop.hive.ql.plan;
 
 import java.util.List;
+import org.apache.hadoop.hive.ql.plan.Explain.Level;
+
 
 
 /**
  * FilterDesc.
  *
  */
-@Explain(displayName = "Filter Operator")
+@Explain(displayName = "Filter Operator", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
 public class FilterDesc extends AbstractOperatorDesc {
 
   /**
    * sampleDesc is used to keep track of the sampling descriptor.
    */
-  public static class sampleDesc implements Cloneable {
+  public static class SampleDesc implements Cloneable {
     // The numerator of the TABLESAMPLE clause
     private int numerator;
 
@@ -41,11 +43,11 @@ public class FilterDesc extends AbstractOperatorDesc {
     // Input files can be pruned
     private boolean inputPruning;
 
-    public sampleDesc() {
+    public SampleDesc() {
     }
 
-    public sampleDesc(int numerator, int denominator,
-        List<String> tabBucketCols, boolean inputPruning) {
+    public SampleDesc(int numerator, int denominator,
+                      List<String> tabBucketCols, boolean inputPruning) {
       this.numerator = numerator;
       this.denominator = denominator;
       this.inputPruning = inputPruning;
@@ -65,18 +67,21 @@ public class FilterDesc extends AbstractOperatorDesc {
 
     @Override
     public Object clone() {
-      sampleDesc desc = new sampleDesc(numerator, denominator, null, inputPruning);
+      SampleDesc desc = new SampleDesc(numerator, denominator, null, inputPruning);
       return desc;
+    }
+    
+    public String toString() {
+      return inputPruning ? "BUCKET " + numerator + " OUT OF " + denominator: null;  
     }
   }
 
   private static final long serialVersionUID = 1L;
   private org.apache.hadoop.hive.ql.plan.ExprNodeDesc predicate;
   private boolean isSamplingPred;
-  private transient sampleDesc sampleDescr;
+  private transient SampleDesc sampleDescr;
   //Is this a filter that should perform a comparison for sorted searches
   private boolean isSortedFilter;
-  private transient boolean isGenerated;
 
   public FilterDesc() {
   }
@@ -91,13 +96,13 @@ public class FilterDesc extends AbstractOperatorDesc {
 
   public FilterDesc(
       final org.apache.hadoop.hive.ql.plan.ExprNodeDesc predicate,
-      boolean isSamplingPred, final sampleDesc sampleDescr) {
+      boolean isSamplingPred, final SampleDesc sampleDescr) {
     this.predicate = predicate;
     this.isSamplingPred = isSamplingPred;
     this.sampleDescr = sampleDescr;
   }
 
-  @Explain(displayName = "predicate")
+  @Explain(displayName = "predicate", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public String getPredicateString() {
     StringBuffer sb = new StringBuffer();
     PlanUtils.addExprToStringBuffer(predicate, sb);
@@ -113,7 +118,7 @@ public class FilterDesc extends AbstractOperatorDesc {
     this.predicate = predicate;
   }
 
-  @Explain(displayName = "isSamplingPred", normalExplain = false)
+  @Explain(displayName = "isSamplingPred", explainLevels = { Level.EXTENDED })
   public boolean getIsSamplingPred() {
     return isSamplingPred;
   }
@@ -122,13 +127,17 @@ public class FilterDesc extends AbstractOperatorDesc {
     this.isSamplingPred = isSamplingPred;
   }
 
-  @Explain(displayName = "sampleDesc", normalExplain = false)
-  public sampleDesc getSampleDescr() {
+  public SampleDesc getSampleDescr() {
     return sampleDescr;
   }
 
-  public void setSampleDescr(final sampleDesc sampleDescr) {
+  public void setSampleDescr(final SampleDesc sampleDescr) {
     this.sampleDescr = sampleDescr;
+  }
+
+  @Explain(displayName = "sampleDesc", explainLevels = { Level.EXTENDED })
+  public String getSampleDescExpr() {
+    return sampleDescr == null ? null : sampleDescr.toString();
   }
 
   public boolean isSortedFilter() {
@@ -137,19 +146,6 @@ public class FilterDesc extends AbstractOperatorDesc {
 
   public void setSortedFilter(boolean isSortedFilter) {
     this.isSortedFilter = isSortedFilter;
-  }
-
-  /**
-   * Some filters are generated or implied, which means it is not in the query.
-   * It is added by the analyzer. For example, when we do an inner join, we add
-   * filters to exclude those rows with null join key values.
-   */
-  public boolean isGenerated() {
-    return isGenerated;
-  }
-
-  public void setGenerated(boolean isGenerated) {
-    this.isGenerated = isGenerated;
   }
 
   @Override

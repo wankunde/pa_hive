@@ -53,7 +53,7 @@ public class SparkSessionImpl implements SparkSession {
     isOpen = true;
     try {
       hiveSparkClient = HiveSparkClientFactory.createHiveSparkClient(conf);
-    } catch (Throwable e) {
+    } catch (Exception e) {
       throw new HiveException("Failed to create spark client.", e);
     }
   }

@@ -1,4 +1,5 @@
 set hive.auto.convert.join=true;
+set hive.join.emit.interval=2;
 set hive.auto.convert.join.noconditionaltask=true;
 set hive.auto.convert.join.noconditionaltask.size=10000;
 set hive.auto.convert.sortmerge.join.bigtable.selection.policy = org.apache.hadoop.hive.ql.optimizer.TableSizeBasedBigTableSelectorForAutoSMJ;
@@ -33,3 +34,52 @@ set hive.auto.convert.join.noconditionaltask.size=500;
 explain
 select count(*) from tab s1 join tab s3 on s1.key=s3.key;
 
+set hive.convert.join.bucket.mapjoin.tez = false;
+explain
+select count(*) from
+tab vt1
+join
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+where vt1.key=vt2.id;
+
+select count(*) from
+tab vt1
+join
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+where vt1.key=vt2.id;
+
+explain
+select count(*) from
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+join
+tab vt1
+where vt1.key=vt2.id;
+
+select count(*) from
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+join
+tab vt1
+where vt1.key=vt2.id;
+
+set hive.auto.convert.join=false;
+
+explain
+select count(*) from
+(select rt1.id from
+(select t1.key as id, t1.value as od from tab t1 order by id, od) rt1) vt1
+join
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+where vt1.id=vt2.id;
+
+select count(*) from
+(select rt1.id from
+(select t1.key as id, t1.value as od from tab t1 order by id, od) rt1) vt1
+join
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+where vt1.id=vt2.id;

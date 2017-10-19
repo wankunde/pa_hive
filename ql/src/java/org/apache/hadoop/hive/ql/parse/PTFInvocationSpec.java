@@ -202,7 +202,6 @@ public class PTFInvocationSpec {
   public static class PartitioningSpec {
     PartitionSpec partSpec;
     OrderSpec orderSpec;
-
     public PartitionSpec getPartSpec() {
       return partSpec;
     }
@@ -250,13 +249,6 @@ public class PTFInvocationSpec {
         return false;
       }
       return true;
-    }
-
-    @Override
-    public String toString() {
-      return String.format("PartitioningSpec=[%s%s]",
-          partSpec == null ? "" : partSpec,
-          orderSpec == null ? "" : orderSpec);
     }
   }
 

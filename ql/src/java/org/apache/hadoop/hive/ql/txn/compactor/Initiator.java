@@ -28,6 +28,7 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.api.CompactionRequest;
 import org.apache.hadoop.hive.metastore.api.CompactionType;
 import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.ShowCompactRequest;
 import org.apache.hadoop.hive.metastore.api.ShowCompactResponse;
@@ -84,12 +85,28 @@ public class Initiator extends CompactorThread {
           LOG.debug("Found " + potentials.size() + " potential compactions, " +
               "checking to see if we should compact any of them");
           for (CompactionInfo ci : potentials) {
-            LOG.debug("Checking to see if we should compact " + ci.getFullPartitionName());
+            LOG.info("Checking to see if we should compact " + ci.getFullPartitionName());
             try {
               Table t = resolveTable(ci);
+              if (t == null) {
+                // Most likely this means it's a temp table
+                LOG.info("Can't find table " + ci.getFullTableName() + ", assuming it's a temp " +
+                    "table or has been dropped and moving on.");
+                continue;
+              }
+
               // check if no compaction set for this table
               if (noAutoCompactSet(t)) {
                 LOG.info("Table " + tableName(t) + " marked true so we will not compact it.");
+                continue;
+              }
+
+              // Check to see if this is a table level request on a partitioned table.  If so,
+              // then it's a dynamic partitioning case and we shouldn't check the table itself.
+              if (t.getPartitionKeys() != null && t.getPartitionKeys().size() > 0 &&
+                  ci.partName  == null) {
+                LOG.debug("Skipping entry for " + ci.getFullTableName() + " as it is from dynamic" +
+                    " partitioning");
                 continue;
               }
 
@@ -104,6 +121,11 @@ public class Initiator extends CompactorThread {
 
               // Figure out who we should run the file operations as
               Partition p = resolvePartition(ci);
+              if (p == null && ci.partName != null) {
+                LOG.info("Can't find partition " + ci.getFullPartitionName() +
+                    ", assuming it has been dropped and moving on.");
+                continue;
+              }
               StorageDescriptor sd = resolveStorageDescriptor(t, p);
               String runAs = findUserToRunAs(sd.getLocation(), t);
 

@@ -48,7 +48,6 @@ public abstract class HivePairFlatMapFunction<T, K, V> implements PairFlatMapFun
   protected void initJobConf() {
     if (jobConf == null) {
       jobConf = KryoSerializer.deserializeJobConf(this.buffer);
-      SmallTableCache.initialize(jobConf);
       setupMRLegacyConfigs();
     }
   }

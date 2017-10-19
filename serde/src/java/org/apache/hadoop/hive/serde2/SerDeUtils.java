@@ -62,6 +62,7 @@ public final class SerDeUtils {
   public static final char QUOTE = '"';
   public static final char COLON = ':';
   public static final char COMMA = ',';
+  public static final char COLUMN_COMMENTS_DELIMITER = '\0';
   public static final String LBRACKET = "[";
   public static final String RBRACKET = "]";
   public static final String LBRACE = "{";
@@ -550,10 +551,10 @@ public final class SerDeUtils {
   }
 
   public static Text transformTextToUTF8(Text text, Charset previousCharset) {
-    return new Text(new String(text.getBytes(), 0, text.getLength(), previousCharset));
+    return new Text(new String(text.getBytes(), previousCharset));
   }
 
   public static Text transformTextFromUTF8(Text text, Charset targetCharset) {
-    return new Text(new String(text.getBytes(), 0, text.getLength()).getBytes(targetCharset));
+    return new Text(new String(text.getBytes()).getBytes(targetCharset));
   }
 }

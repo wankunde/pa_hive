@@ -22,9 +22,9 @@ package org.apache.hive.hcatalog.mapreduce;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.MetaStoreUtils;
 import org.apache.hadoop.hive.ql.metadata.HiveStorageHandler;
-import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
@@ -97,7 +97,8 @@ class FileOutputFormatContainer extends OutputFormatContainer {
           (org.apache.hadoop.mapred.RecordWriter)null, context);
     } else {
       Path parentDir = new Path(context.getConfiguration().get("mapred.work.output.dir"));
-      Path childPath = new Path(parentDir,FileOutputFormat.getUniqueName(new JobConf(context.getConfiguration()), "part"));
+      Path childPath = new Path(parentDir,FileOutputFormat.getUniqueName(new JobConf(context.getConfiguration()),
+               context.getConfiguration().get("mapreduce.output.basename", "part")));
 
       rw = new StaticPartitionFileRecordWriterContainer(
           getBaseOutputFormat().getRecordWriter(
@@ -113,10 +114,10 @@ class FileOutputFormatContainer extends OutputFormatContainer {
   @Override
   public void checkOutputSpecs(JobContext context) throws IOException, InterruptedException {
     OutputJobInfo jobInfo = HCatOutputFormat.getJobInfo(context.getConfiguration());
-    HiveMetaStoreClient client = null;
+    IMetaStoreClient client = null;
     try {
       HiveConf hiveConf = HCatUtil.getHiveConf(context.getConfiguration());
-      client = HCatUtil.getHiveClient(hiveConf);
+      client = HCatUtil.getHiveMetastoreClient(hiveConf);
       handleDuplicatePublish(context,
         jobInfo,
         client,
@@ -163,7 +164,7 @@ class FileOutputFormatContainer extends OutputFormatContainer {
    * @throws org.apache.thrift.TException
    */
   private static void handleDuplicatePublish(JobContext context, OutputJobInfo outputInfo,
-      HiveMetaStoreClient client, Table table)
+      IMetaStoreClient client, Table table)
       throws IOException, MetaException, TException, NoSuchObjectException {
 
     /*

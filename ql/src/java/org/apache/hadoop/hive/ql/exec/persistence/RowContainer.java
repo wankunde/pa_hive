@@ -46,7 +46,7 @@ import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.Reporter;
-import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hive.common.util.ReflectionUtil;
 
 /**
  * Simple persistent container for rows.
@@ -103,7 +103,7 @@ public class RowContainer<ROW extends List<Object>>
 
   boolean firstCalled = false; // once called first, it will never be able to
   // write again.
-  private int actualSplitNum = 0;
+  int acutalSplitNum = 0;
   int currentSplitPointer = 0;
   org.apache.hadoop.mapred.RecordReader rr = null; // record reader
   RecordWriter rw = null;
@@ -213,14 +213,14 @@ public class RowContainer<ROW extends List<Object>>
         JobConf localJc = getLocalFSJobConfClone(jc);
         if (inputSplits == null) {
           if (this.inputFormat == null) {
-            inputFormat = ReflectionUtils.newInstance(
+            inputFormat = ReflectionUtil.newInstance(
                 tblDesc.getInputFileFormatClass(), localJc);
           }
 
           HiveConf.setVar(localJc, HiveConf.ConfVars.HADOOPMAPREDINPUTDIR,
               org.apache.hadoop.util.StringUtils.escapeString(parentFile.getAbsolutePath()));
           inputSplits = inputFormat.getSplits(localJc, 1);
-          actualSplitNum = inputSplits.length;
+          acutalSplitNum = inputSplits.length;
         }
         currentSplitPointer = 0;
         rr = inputFormat.getRecordReader(inputSplits[currentSplitPointer],
@@ -331,6 +331,17 @@ public class RowContainer<ROW extends List<Object>>
     }
   }
 
+
+  @Override
+  public boolean hasRows() {
+    return size > 0;
+  }
+
+  @Override
+  public boolean isSingleRow() {
+    return size == 1;
+  }
+
   /**
    * Get the number of elements in the RowContainer.
    *
@@ -364,7 +375,7 @@ public class RowContainer<ROW extends List<Object>>
         }
       }
 
-      if (nextSplit && this.currentSplitPointer < this.actualSplitNum) {
+      if (nextSplit && this.currentSplitPointer < this.acutalSplitNum) {
         JobConf localJc = getLocalFSJobConfClone(jc);
         // open record reader to read next split
         rr = inputFormat.getRecordReader(inputSplits[currentSplitPointer], jobCloneUsingLocalFs,
@@ -410,7 +421,7 @@ public class RowContainer<ROW extends List<Object>>
     addCursor = 0;
     numFlushedBlocks = 0;
     this.readBlockSize = 0;
-    this.actualSplitNum = 0;
+    this.acutalSplitNum = 0;
     this.currentSplitPointer = -1;
     this.firstCalled = false;
     this.inputSplits = null;
@@ -594,9 +605,5 @@ public class RowContainer<ROW extends List<Object>>
   protected void close() throws HiveException {
     clearRows();
     currentReadBlock = firstReadBlockPointer = currentWriteBlock = null;
-  }
-
-  protected int getLastActualSplit() {
-    return actualSplitNum - 1;
   }
 }

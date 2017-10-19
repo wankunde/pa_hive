@@ -29,8 +29,6 @@ import java.util.Properties;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Schema;
@@ -43,7 +41,6 @@ import org.apache.hadoop.hive.ql.session.SessionState;
  *
  */
 public class SetProcessor implements CommandProcessor {
-  private static final Log LOG = LogFactory.getLog(SetProcessor.class);
 
   private static final String prefix = "set: ";
 
@@ -65,6 +62,9 @@ public class SetProcessor implements CommandProcessor {
     for (Object one : p.keySet()) {
       String oneProp = (String) one;
       String oneValue = p.getProperty(oneProp);
+      if (ss.getConf().isHiddenConfig(oneProp)) {
+        continue;
+      }
       sortedMap.put(oneProp, oneValue);
     }
 
@@ -91,7 +91,9 @@ public class SetProcessor implements CommandProcessor {
   private void dumpOption(String s) {
     SessionState ss = SessionState.get();
 
-    if (ss.getConf().get(s) != null) {
+    if (ss.getConf().isHiddenConfig(s)) {
+      ss.out.println(s + " is a hidden config");
+    } else if (ss.getConf().get(s) != null) {
       ss.out.println(s + "=" + ss.getConf().get(s));
     } else if (ss.getHiveVariables().containsKey(s)) {
       ss.out.println(s + "=" + ss.getHiveVariables().get(s));
@@ -164,14 +166,10 @@ public class SetProcessor implements CommandProcessor {
           throw new IllegalArgumentException(message.toString());
         }
       } else if (key.startsWith("hive.")) {
-        LOG.warn("hive configuration " + key + " does not exists.");
+        throw new IllegalArgumentException("hive configuration " + key + " does not exists.");
       }
     }
     conf.verifyAndSet(key, value);
-    if (HiveConf.ConfVars.HIVE_EXECUTION_ENGINE.varname.equals(key)
-        && !"spark".equals(value)) {
-      SessionState.get().closeSparkSession();
-    }
     if (register) {
       SessionState.get().getOverriddenConfigurations().put(key, value);
     }
@@ -218,7 +216,10 @@ public class SetProcessor implements CommandProcessor {
       }
     } else if (varname.indexOf(HIVECONF_PREFIX) == 0) {
       String var = varname.substring(HIVECONF_PREFIX.length());
-      if (ss.getConf().get(var) != null) {
+      if (ss.getConf().isHiddenConfig(var)) {
+        ss.out.println(HIVECONF_PREFIX + var + " is a hidden config");
+        return createProcessorSuccessResponse();
+      } if (ss.getConf().get(var) != null) {
         ss.out.println(HIVECONF_PREFIX + var + "=" + ss.getConf().get(var));
         return createProcessorSuccessResponse();
       } else {

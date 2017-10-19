@@ -18,6 +18,36 @@
 
 package org.apache.hadoop.hive.ql.exec;
 
+import static org.apache.commons.lang.StringUtils.join;
+import static org.apache.hadoop.util.StringUtils.stringifyException;
+
+import java.io.BufferedWriter;
+import java.io.DataOutputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Serializable;
+import java.io.Writer;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
+
+import com.google.common.collect.Iterables;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
@@ -27,6 +57,7 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FsShell;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.common.FileUtils;
 import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.common.type.HiveDecimal;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -61,6 +92,7 @@ import org.apache.hadoop.hive.ql.DriverContext;
 import org.apache.hadoop.hive.ql.ErrorMsg;
 import org.apache.hadoop.hive.ql.QueryPlan;
 import org.apache.hadoop.hive.ql.exec.ArchiveUtils.PartSpecInfo;
+import org.apache.hadoop.hive.ql.exec.tez.TezTask;
 import org.apache.hadoop.hive.ql.hooks.ReadEntity;
 import org.apache.hadoop.hive.ql.hooks.WriteEntity;
 import org.apache.hadoop.hive.ql.io.RCFileInputFormat;
@@ -84,12 +116,14 @@ import org.apache.hadoop.hive.ql.metadata.HiveStorageHandler;
 import org.apache.hadoop.hive.ql.metadata.HiveUtils;
 import org.apache.hadoop.hive.ql.metadata.InvalidTableException;
 import org.apache.hadoop.hive.ql.metadata.Partition;
+import org.apache.hadoop.hive.ql.metadata.PartitionIterable;
 import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.ql.metadata.formatting.MetaDataFormatUtils;
 import org.apache.hadoop.hive.ql.metadata.formatting.MetaDataFormatter;
 import org.apache.hadoop.hive.ql.parse.AlterTablePartMergeFilesDesc;
 import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer;
 import org.apache.hadoop.hive.ql.parse.DDLSemanticAnalyzer;
+import org.apache.hadoop.hive.ql.parse.ReplicationSpec;
 import org.apache.hadoop.hive.ql.plan.AddPartitionDesc;
 import org.apache.hadoop.hive.ql.plan.AlterDatabaseDesc;
 import org.apache.hadoop.hive.ql.plan.AlterIndexDesc;
@@ -141,6 +175,7 @@ import org.apache.hadoop.hive.ql.plan.ShowTablesDesc;
 import org.apache.hadoop.hive.ql.plan.ShowTblPropertiesDesc;
 import org.apache.hadoop.hive.ql.plan.ShowTxnsDesc;
 import org.apache.hadoop.hive.ql.plan.SwitchDatabaseDesc;
+import org.apache.hadoop.hive.ql.plan.TezWork;
 import org.apache.hadoop.hive.ql.plan.TruncateTableDesc;
 import org.apache.hadoop.hive.ql.plan.UnlockDatabaseDesc;
 import org.apache.hadoop.hive.ql.plan.UnlockTableDesc;
@@ -171,43 +206,14 @@ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
 import org.apache.hadoop.hive.shims.HadoopShims;
-import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.hive.shims.HadoopShims.HdfsFileStatus;
+import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.tools.HadoopArchives;
-import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hive.common.util.AnnotationUtils;
+import org.apache.hive.common.util.ReflectionUtil;
 import org.stringtemplate.v4.ST;
-
-import java.io.BufferedWriter;
-import java.io.DataOutputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.Serializable;
-import java.io.Writer;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import java.util.SortedSet;
-import java.util.TreeMap;
-import java.util.TreeSet;
-
-import static org.apache.commons.lang.StringUtils.join;
-import static org.apache.hadoop.util.StringUtils.stringifyException;
 
 /**
  * DDLTask implementation.
@@ -217,7 +223,6 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
   private static final long serialVersionUID = 1L;
   private static final Log LOG = LogFactory.getLog("hive.ql.exec.DDLTask");
 
-  transient HiveConf conf;
   private static final int separator = Utilities.tabCode;
   private static final int terminator = Utilities.newLineCode;
 
@@ -241,7 +246,6 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
   @Override
   public void initialize(HiveConf conf, QueryPlan queryPlan, DriverContext ctx) {
     super.initialize(conf, queryPlan, ctx);
-    this.conf = conf;
 
     // Pick the formatter to use to display the results.  Either the
     // normal human readable output or a json object.
@@ -568,6 +572,12 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
     // merge work only needs input and output.
     MergeFileWork mergeWork = new MergeFileWork(mergeFilesDesc.getInputDir(),
         mergeFilesDesc.getOutputDir(), mergeFilesDesc.getInputFormatClass().getName());
+    LinkedHashMap<String, ArrayList<String>> pathToAliases =
+        new LinkedHashMap<String, ArrayList<String>>();
+    ArrayList<String> inputDirstr = new ArrayList<String>(1);
+    inputDirstr.add(mergeFilesDesc.getInputDir().toString());
+    pathToAliases.put(mergeFilesDesc.getInputDir().get(0).toString(), inputDirstr);
+    mergeWork.setPathToAliases(pathToAliases);
     mergeWork.setListBucketingCtx(mergeFilesDesc.getLbCtx());
     mergeWork.resolveConcatenateMerge(db.getConf());
     mergeWork.setMapperCannotSpanPartns(true);
@@ -593,12 +603,21 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
     aliasToWork.put(mergeFilesDesc.getInputDir().toString(), mergeOp);
     mergeWork.setAliasToWork(aliasToWork);
     DriverContext driverCxt = new DriverContext();
-    MergeFileTask taskExec = new MergeFileTask();
-    taskExec.initialize(db.getConf(), null, driverCxt);
-    taskExec.setWork(mergeWork);
-    taskExec.setQueryPlan(this.getQueryPlan());
-    int ret = taskExec.execute(driverCxt);
+    Task task;
+    if (conf.getVar(ConfVars.HIVE_EXECUTION_ENGINE).equals("tez")) {
+      TezWork tezWork = new TezWork(conf.getVar(HiveConf.ConfVars.HIVEQUERYID));
+      mergeWork.setName("File Merge");
+      tezWork.add(mergeWork);
+      task = new TezTask();
+      task.setWork(tezWork);
+    } else {
+      task = new MergeFileTask();
+      task.setWork(mergeWork);
+    }
 
+    // initialize the task and execute
+    task.initialize(db.getConf(), getQueryPlan(), driverCxt);
+    int ret = task.execute(driverCxt);
     return ret;
   }
 
@@ -922,10 +941,17 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
 
     Table tbl = db.getTable(renamePartitionDesc.getTableName());
 
-    Partition oldPart = db.getPartition(tbl, renamePartitionDesc.getOldPartSpec(), false);
-    Partition part = db.getPartition(tbl, renamePartitionDesc.getOldPartSpec(), false);
+    LinkedHashMap<String, String> oldPartSpec = renamePartitionDesc.getOldPartSpec();
+    Partition oldPart = db.getPartition(tbl, oldPartSpec, false);
+    if (oldPart == null) {
+      String partName = FileUtils.makePartName(new ArrayList<String>(oldPartSpec.keySet()),
+          new ArrayList<String>(oldPartSpec.values()));
+      throw new HiveException("Rename partition: source partition [" + partName
+          + "] does not exist.");
+    }
+    Partition part = db.getPartition(tbl, oldPartSpec, false);
     part.setValues(renamePartitionDesc.getNewPartSpec());
-    db.renamePartition(tbl, renamePartitionDesc.getOldPartSpec(), part);
+    db.renamePartition(tbl, oldPartSpec, part);
     Partition newPart = db
         .getPartition(tbl, renamePartitionDesc.getNewPartSpec(), false);
     work.getInputs().add(new ReadEntity(oldPart));
@@ -1896,7 +1922,7 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
 
       if (tbl.isView()) {
         String createTab_stmt = "CREATE VIEW `" + tableName + "` AS " + tbl.getViewExpandedText();
-        outStream.write(createTab_stmt.toString().getBytes("UTF-8"));
+        outStream.writeBytes(createTab_stmt.toString());
         outStream.close();
         outStream = null;
         return 0;
@@ -2081,7 +2107,7 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
       }
       createTab_stmt.add(TBL_PROPERTIES, tbl_properties);
 
-      outStream.write(createTab_stmt.render().getBytes("UTF-8"));
+      outStream.writeBytes(createTab_stmt.render());
       outStream.close();
       outStream = null;
     } catch (FileNotFoundException e) {
@@ -3670,6 +3696,39 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
   }
 
   private void dropPartitions(Hive db, Table tbl, DropTableDesc dropTbl) throws HiveException {
+
+    ReplicationSpec replicationSpec = dropTbl.getReplicationSpec();
+    if (replicationSpec.isInReplicationScope()){
+      /**
+       * ALTER TABLE DROP PARTITION ... FOR REPLICATION(x) behaves as a DROP PARTITION IF OLDER THAN x
+       *
+       * So, we check each partition that matches our DropTableDesc.getPartSpecs(), and drop it only
+       * if it's older than the event that spawned this replicated request to drop partition
+       */
+      // TODO: Current implementation of replication will result in DROP_PARTITION under replication
+      // scope being called per-partition instead of multiple partitions. However, to be robust, we
+      // must still handle the case of multiple partitions in case this assumption changes in the
+      // future. However, if this assumption changes, we will not be very performant if we fetch
+      // each partition one-by-one, and then decide on inspection whether or not this is a candidate
+      // for dropping. Thus, we need a way to push this filter (replicationSpec.allowEventReplacementInto)
+      // to the  metastore to allow it to do drop a partition or not, depending on a Predicate on the
+      // parameter key values.
+      for (DropTableDesc.PartSpec partSpec : dropTbl.getPartSpecs()){
+        try {
+          for (Partition p : Iterables.filter(
+              db.getPartitionsByFilter(tbl, partSpec.getPartSpec().getExprString()),
+              replicationSpec.allowEventReplacementInto())){
+            db.dropPartition(tbl.getDbName(),tbl.getTableName(),p.getValues(),true);
+          }
+        } catch (NoSuchObjectException e){
+          // ignore NSOE because that means there's nothing to drop.
+        } catch (Exception e) {
+          throw new HiveException(e.getMessage(), e);
+        }
+      }
+      return;
+    }
+
     // ifExists is currently verified in DDLSemanticAnalyzer
     List<Partition> droppedParts
         = db.dropPartitions(dropTbl.getTableName(),
@@ -3710,6 +3769,46 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
     if (tbl != null && !tbl.canDrop()) {
       throw new HiveException("Table " + tbl.getTableName() +
           " is protected from being dropped");
+    }
+
+    ReplicationSpec replicationSpec = dropTbl.getReplicationSpec();
+    if ((tbl!= null) && replicationSpec.isInReplicationScope()){
+      /**
+       * DROP TABLE FOR REPLICATION behaves differently from DROP TABLE IF EXISTS - it more closely
+       * matches a DROP TABLE IF OLDER THAN(x) semantic.
+       *
+       * Ideally, commands executed under the scope of replication need to be idempotent and resilient
+       * to repeats. What can happen, sometimes, is that a drone processing a replication task can
+       * have been abandoned for not returning in time, but still execute its task after a while,
+       * which should not result in it mucking up data that has been impressed later on. So, for eg.,
+       * if we create partition P1, followed by droppping it, followed by creating it yet again,
+       * the replication of that drop should not drop the newer partition if it runs after the destination
+       * object is already in the newer state.
+       *
+       * Thus, we check the replicationSpec.allowEventReplacementInto to determine whether or not we can
+       * drop the object in question(will return false if object is newer than the event, true if not)
+       *
+       * In addition, since DROP TABLE FOR REPLICATION can result in a table not being dropped, while DROP
+       * TABLE will always drop the table, and the included partitions, DROP TABLE FOR REPLICATION must
+       * do one more thing - if it does not drop the table because the table is in a newer state, it must
+       * drop the partitions inside it that are older than this event. To wit, DROP TABLE FOR REPL
+       * acts like a recursive DROP TABLE IF OLDER.
+       */
+      if (!replicationSpec.allowEventReplacementInto(tbl)){
+        // Drop occured as part of replicating a drop, but the destination
+        // table was newer than the event being replicated. Ignore, but drop
+        // any partitions inside that are older.
+        if (tbl.isPartitioned()){
+
+          PartitionIterable partitions = new PartitionIterable(db,tbl,null,conf.getIntVar(
+              HiveConf.ConfVars.METASTORE_BATCH_RETRIEVE_MAX));
+
+          for (Partition p : Iterables.filter(partitions, replicationSpec.allowEventReplacementInto())){
+            db.dropPartition(tbl.getDbName(),tbl.getTableName(),p.getValues(),true);
+          }
+        }
+        return; // table is newer, leave it be.
+      }
     }
 
     int partitionBatchSize = HiveConf.getIntVar(conf,
@@ -3763,7 +3862,7 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
   private void validateSerDe(String serdeName) throws HiveException {
     try {
 
-      Deserializer d = ReflectionUtils.newInstance(conf.getClassByName(serdeName).
+      Deserializer d = ReflectionUtil.newInstance(conf.getClassByName(serdeName).
           asSubclass(Deserializer.class), conf);
       if (d != null) {
         LOG.debug("Found class for " + serdeName);
@@ -3866,7 +3965,12 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
    */
   private int createTable(Hive db, CreateTableDesc crtTbl) throws HiveException {
     // create the table
-    Table tbl = db.newTable(crtTbl.getTableName());
+    Table tbl;
+    if (crtTbl.getDatabaseName() == null || (crtTbl.getTableName().contains("."))){
+      tbl = db.newTable(crtTbl.getTableName());
+    }else {
+      tbl = new Table(crtTbl.getDatabaseName(),crtTbl.getTableName());
+    }
 
     if (crtTbl.getTblProps() != null) {
       tbl.getTTable().getParameters().putAll(crtTbl.getTblProps());
@@ -4020,7 +4124,16 @@ public class DDLTask extends Task<DDLWork> implements Serializable {
     }
 
     // create the table
-    db.createTable(tbl, crtTbl.getIfNotExists());
+    if (crtTbl.getReplaceMode()){
+      // replace-mode creates are really alters using CreateTableDesc.
+      try {
+        db.alterTable(tbl.getDbName()+"."+tbl.getTableName(),tbl);
+      } catch (InvalidOperationException e) {
+        throw new HiveException("Unable to alter table. " + e.getMessage(), e);
+      }
+    } else {
+      db.createTable(tbl, crtTbl.getIfNotExists());
+    }
     work.getOutputs().add(new WriteEntity(tbl, WriteEntity.WriteType.DDL_NO_LOCK));
     return 0;
   }

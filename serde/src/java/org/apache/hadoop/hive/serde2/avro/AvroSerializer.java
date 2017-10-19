@@ -18,14 +18,17 @@
 package org.apache.hadoop.hive.serde2.avro;
 
 import java.sql.Date;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.avro.Schema;
 import org.apache.avro.Schema.Field;
 import org.apache.avro.Schema.Type;
+import org.apache.avro.generic.GenericArray;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericData.Fixed;
 import org.apache.avro.generic.GenericEnumSymbol;
@@ -43,6 +46,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.UnionObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.DateObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.TimestampObjectInspector;
 import org.apache.hadoop.hive.serde2.typeinfo.DecimalTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.ListTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.MapTypeInfo;
@@ -52,6 +56,8 @@ import org.apache.hadoop.hive.serde2.typeinfo.UnionTypeInfo;
 import org.apache.hadoop.io.Writable;
 
 class AvroSerializer {
+  private static final Log LOG = LogFactory.getLog(AvroSerializer.class);
+
   /**
    * The Schema to use when serializing Map keys.
    * Since we're sharing this across Serializer instances, it must be immutable;
@@ -148,10 +154,12 @@ class AvroSerializer {
   final InstanceCache<Schema, InstanceCache<Object, GenericEnumSymbol>> enums
       = new InstanceCache<Schema, InstanceCache<Object, GenericEnumSymbol>>() {
           @Override
-          protected InstanceCache<Object, GenericEnumSymbol> makeInstance(final Schema schema) {
+          protected InstanceCache<Object, GenericEnumSymbol> makeInstance(final Schema schema,
+                     Set<Schema> seenSchemas) {
             return new InstanceCache<Object, GenericEnumSymbol>() {
               @Override
-              protected GenericEnumSymbol makeInstance(Object seed) {
+              protected GenericEnumSymbol makeInstance(Object seed,
+                             Set<Object> seenSchemas) {
                 return new GenericData.EnumSymbol(schema, seed.toString());
               }
             };
@@ -205,6 +213,10 @@ class AvroSerializer {
     case DATE:
       Date date = ((DateObjectInspector)fieldOI).getPrimitiveJavaObject(structFieldData);
       return DateWritable.dateToDays(date);
+    case TIMESTAMP:
+      Timestamp timestamp =
+        ((TimestampObjectInspector) fieldOI).getPrimitiveJavaObject(structFieldData);
+      return timestamp.getTime();
     case UNKNOWN:
       throw new AvroSerdeException("Received UNKNOWN primitive category.");
     case VOID:
@@ -226,7 +238,7 @@ class AvroSerializer {
 
   private Object serializeList(ListTypeInfo typeInfo, ListObjectInspector fieldOI, Object structFieldData, Schema schema) throws AvroSerdeException {
     List<?> list = fieldOI.getList(structFieldData);
-    List<Object> deserialized = new ArrayList<Object>(list.size());
+    List<Object> deserialized = new GenericData.Array<Object>(list.size(), schema);
 
     TypeInfo listElementTypeInfo = typeInfo.getListElementTypeInfo();
     ObjectInspector listElementObjectInspector = fieldOI.getListElementObjectInspector();

@@ -18,6 +18,9 @@
 package org.apache.hadoop.hive.ql.exec.tez;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.commons.logging.Log;
@@ -26,23 +29,23 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
 import org.apache.hadoop.hive.ql.exec.MapredContext;
-import org.apache.hadoop.hive.ql.exec.mapjoin.MapJoinMemoryExhaustionHandler;
 import org.apache.hadoop.hive.ql.exec.mr.ExecMapperContext;
 import org.apache.hadoop.hive.ql.exec.persistence.HashMapWrapper;
+import org.apache.hadoop.hive.ql.exec.persistence.HybridHashTableConf;
+import org.apache.hadoop.hive.ql.exec.persistence.HybridHashTableContainer;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinBytesTableContainer;
-import org.apache.hadoop.hive.ql.exec.persistence.MapJoinKey;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinObjectSerDeContext;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinTableContainer;
 import org.apache.hadoop.hive.ql.exec.persistence.MapJoinTableContainerSerDe;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.plan.MapJoinDesc;
-import org.apache.hadoop.hive.serde2.SerDeException;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.io.Writable;
+import org.apache.tez.runtime.api.Input;
 import org.apache.tez.runtime.api.LogicalInput;
 import org.apache.tez.runtime.library.api.KeyValueReader;
 
@@ -54,30 +57,83 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
 
   private static final Log LOG = LogFactory.getLog(HashTableLoader.class.getName());
 
-  private ExecMapperContext context;
   private Configuration hconf;
   private MapJoinDesc desc;
+  private TezContext tezContext;
 
   @Override
-  public void init(ExecMapperContext context, Configuration hconf, MapJoinOperator joinOp) {
-    this.context = context;
+  public void init(ExecMapperContext context, MapredContext mrContext, Configuration hconf,
+      MapJoinOperator joinOp) {
+    this.tezContext = (TezContext) mrContext;
     this.hconf = hconf;
     this.desc = joinOp.getConf();
   }
 
   @Override
-  public void load(
-      MapJoinTableContainer[] mapJoinTables,
-      MapJoinTableContainerSerDe[] mapJoinTableSerdes, long memUsage) throws HiveException {
+  public void load(MapJoinTableContainer[] mapJoinTables,
+      MapJoinTableContainerSerDe[] mapJoinTableSerdes)
+      throws HiveException {
 
-    TezContext tezContext = (TezContext) MapredContext.get();
     Map<Integer, String> parentToInput = desc.getParentToInput();
     Map<Integer, Long> parentKeyCounts = desc.getParentKeyCounts();
 
     boolean useOptimizedTables = HiveConf.getBoolVar(
         hconf, HiveConf.ConfVars.HIVEMAPJOINUSEOPTIMIZEDTABLE);
+    boolean useHybridGraceHashJoin = desc.isHybridHashJoin();
     boolean isFirstKey = true;
-    TezCacheAccess tezCacheAccess = TezCacheAccess.createInstance(hconf);
+    // TODO remove this after memory manager is in
+    long noConditionalTaskThreshold = HiveConf.getLongVar(
+        hconf, HiveConf.ConfVars.HIVECONVERTJOINNOCONDITIONALTASKTHRESHOLD);
+    long processMaxMemory = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getMax();
+    if (noConditionalTaskThreshold > processMaxMemory) {
+      float hashtableMemoryUsage = HiveConf.getFloatVar(
+          hconf, HiveConf.ConfVars.HIVEHASHTABLEFOLLOWBYGBYMAXMEMORYUSAGE);
+      LOG.warn("noConditionalTaskThreshold value of " + noConditionalTaskThreshold +
+          " is greater than the max memory size of " + processMaxMemory);
+      // Don't want to attempt to grab more memory than we have available .. percentage is a bit arbitrary
+      noConditionalTaskThreshold = (long) (processMaxMemory * hashtableMemoryUsage);
+    }
+
+    // Only applicable to n-way Hybrid Grace Hash Join
+    HybridHashTableConf nwayConf = null;
+    long totalSize = 0;
+    int biggest = 0;                                // position of the biggest small table
+    Map<Integer, Long> tableMemorySizes = null;
+    if (useHybridGraceHashJoin && mapJoinTables.length > 2) {
+      // Create a Conf for n-way HybridHashTableContainers
+      nwayConf = new HybridHashTableConf();
+
+      // Find the biggest small table; also calculate total data size of all small tables
+      long maxSize = Long.MIN_VALUE; // the size of the biggest small table
+      for (int pos = 0; pos < mapJoinTables.length; pos++) {
+        if (pos == desc.getPosBigTable()) {
+          continue;
+        }
+        long smallTableSize = desc.getParentDataSizes().get(pos);
+        totalSize += smallTableSize;
+        if (maxSize < smallTableSize) {
+          maxSize = smallTableSize;
+          biggest = pos;
+        }
+      }
+
+      tableMemorySizes = divideHybridHashTableMemory(mapJoinTables, desc,
+          totalSize, noConditionalTaskThreshold);
+      // Using biggest small table, calculate number of partitions to create for each small table
+      long memory = tableMemorySizes.get(biggest);
+      int numPartitions = 0;
+      try {
+        numPartitions = HybridHashTableContainer.calcNumPartitions(memory,
+            maxSize,
+            HiveConf.getIntVar(hconf, HiveConf.ConfVars.HIVEHYBRIDGRACEHASHJOINMINNUMPARTITIONS),
+            HiveConf.getIntVar(hconf, HiveConf.ConfVars.HIVEHYBRIDGRACEHASHJOINMINWBSIZE),
+            nwayConf);
+      } catch (IOException e) {
+        throw new HiveException(e);
+      }
+      nwayConf.setNumberOfPartitions(numPartitions);
+    }
+
     for (int pos = 0; pos < mapJoinTables.length; pos++) {
       if (pos == desc.getPosBigTable()) {
         continue;
@@ -85,6 +141,14 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
 
       String inputName = parentToInput.get(pos);
       LogicalInput input = tezContext.getInput(inputName);
+
+      try {
+        input.start();
+        tezContext.getTezProcessorContext().waitForAnyInputReady(
+            Collections.<Input> singletonList(input));
+      } catch (Exception e) {
+        throw new HiveException(e);
+      }
 
       try {
         KeyValueReader kvReader = (KeyValueReader) input.getReader();
@@ -95,6 +159,8 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
           if (!MapJoinBytesTableContainer.isSupportedKey(keyOi)) {
             if (isFirstKey) {
               useOptimizedTables = false;
+              LOG.info(describeOi("Not using optimized hash table. " +
+                           "Only a subset of mapjoin keys is supported. Unsupported key: ", keyOi));
             } else {
               throw new HiveException(describeOi(
                   "Only a subset of mapjoin keys is supported. Unsupported key: ", keyOi));
@@ -104,33 +170,72 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
         isFirstKey = false;
         Long keyCountObj = parentKeyCounts.get(pos);
         long keyCount = (keyCountObj == null) ? -1 : keyCountObj.longValue();
+
+        long memory = 0;
+        if (useHybridGraceHashJoin) {
+          if (mapJoinTables.length > 2) {
+            memory = tableMemorySizes.get(pos);
+          } else {  // binary join
+            memory = noConditionalTaskThreshold;
+          }
+        }
+
         MapJoinTableContainer tableContainer = useOptimizedTables
-            ? new MapJoinBytesTableContainer(hconf, valCtx, keyCount, memUsage)
+            ? (useHybridGraceHashJoin ? new HybridHashTableContainer(hconf, keyCount,
+                                            memory, desc.getParentDataSizes().get(pos), nwayConf)
+                                      : new MapJoinBytesTableContainer(hconf, valCtx, keyCount, 0))
             : new HashMapWrapper(hconf, keyCount);
+        LOG.info("Using tableContainer " + tableContainer.getClass().getSimpleName());
 
         while (kvReader.next()) {
           tableContainer.putRow(keyCtx, (Writable)kvReader.getCurrentKey(),
               valCtx, (Writable)kvReader.getCurrentValue());
         }
-
         tableContainer.seal();
         mapJoinTables[pos] = tableContainer;
-      } catch (IOException e) {
-        throw new HiveException(e);
-      } catch (SerDeException e) {
-        throw new HiveException(e);
       } catch (Exception e) {
         throw new HiveException(e);
       }
-      // Register that the Input has been cached.
-      LOG.info("Is this a bucket map join: " + desc.isBucketMapJoin());
-      // cache is disabled for bucket map join because of the same reason
-      // given in loadHashTable in MapJoinOperator.
-      if (!desc.isBucketMapJoin()) {
-        tezCacheAccess.registerCachedInput(inputName);
-        LOG.info("Setting Input: " + inputName + " as cached");
+    }
+  }
+
+  private static Map<Integer, Long> divideHybridHashTableMemory(
+      MapJoinTableContainer[] mapJoinTables, MapJoinDesc desc,
+      long totalSize, long totalHashTableMemory) {
+    int smallTableCount = Math.max(mapJoinTables.length - 1, 1);
+    Map<Integer, Long> tableMemorySizes = new HashMap<Integer, Long>();
+    // If any table has bad size estimate, we need to fall back to sizing each table equally
+    boolean fallbackToEqualProportions = totalSize <= 0;
+
+    if (!fallbackToEqualProportions) {
+      for (Map.Entry<Integer, Long> tableSizeEntry : desc.getParentDataSizes().entrySet()) {
+        if (tableSizeEntry.getKey() == desc.getPosBigTable()) {
+          continue;
+        }
+
+        long tableSize = tableSizeEntry.getValue();
+        if (tableSize <= 0) {
+          fallbackToEqualProportions = true;
+          break;
+        }
+        float percentage = (float) tableSize / totalSize;
+        long tableMemory = (long) (totalHashTableMemory * percentage);
+        tableMemorySizes.put(tableSizeEntry.getKey(), tableMemory);
       }
     }
+
+    if (fallbackToEqualProportions) {
+      // Just give each table the same amount of memory.
+      long equalPortion = totalHashTableMemory / smallTableCount;
+      for (Integer pos : desc.getParentDataSizes().keySet()) {
+        if (pos == desc.getPosBigTable()) {
+          break;
+        }
+        tableMemorySizes.put(pos, equalPortion);
+      }
+    }
+
+    return tableMemorySizes;
   }
 
   private String describeOi(String desc, ObjectInspector keyOi) {

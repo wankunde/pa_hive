@@ -81,8 +81,8 @@ import org.apache.hadoop.util.Progressable;
  */
 public class PTFRowContainer<Row extends List<Object>> extends RowContainer<Row> {
 
-  private ArrayList<BlockInfo> blockInfos;
-  private int currentReadBlockStartRow;
+  ArrayList<BlockInfo> blockInfos;
+  int currentReadBlockStartRow;
 
   public PTFRowContainer(int bs, Configuration jc, Reporter reporter
       ) throws HiveException {
@@ -190,16 +190,14 @@ public class PTFRowContainer<Row extends List<Object>> extends RowContainer<Row>
 
     BlockInfo bI = blockInfos.get(blockNum);
     int startSplit = bI.startingSplit;
-    int endSplit;
-    if ( blockNum != blockInfos.size() - 1 ) {
-      endSplit = blockInfos.get(blockNum + 1).startingSplit;
-    } else {
-      endSplit = getLastActualSplit();
+    int endSplit = startSplit;
+    if ( blockNum != blockInfos.size() - 1) {
+      endSplit = blockInfos.get(blockNum+1).startingSplit;
     }
 
     try {
       int readIntoOffset = 0;
-      for(int i = startSplit; i <= endSplit && readIntoOffset < getBlockSize(); i++ ) {
+      for(int i = startSplit; i <= endSplit; i++ ) {
         org.apache.hadoop.mapred.RecordReader rr = setReaderAtSplit(i);
         if ( i == startSplit ) {
           ((PTFSequenceFileRecordReader)rr).seek(bI.startOffset);

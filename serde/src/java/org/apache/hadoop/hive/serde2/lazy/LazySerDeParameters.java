@@ -1,3 +1,21 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.hadoop.hive.serde2.lazy;
 
 import java.util.ArrayList;
@@ -11,6 +29,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.serde.serdeConstants;
 import org.apache.hadoop.hive.serde2.SerDeException;
+import org.apache.hadoop.hive.serde2.lazy.objectinspector.primitive.LazyObjectInspectorParameters;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
@@ -21,7 +40,7 @@ import org.apache.hive.common.util.HiveStringUtils;
  * SerDeParameters.
  *
  */
-public class LazySerDeParameters {
+public class LazySerDeParameters implements LazyObjectInspectorParameters {
   public static final byte[] DefaultSeparators = {(byte) 1, (byte) 2, (byte) 3};
   public static final String SERIALIZATION_EXTEND_NESTING_LEVELS
   	= "hive.serialization.extend.nesting.levels";
@@ -83,6 +102,12 @@ public class LazySerDeParameters {
     
     extendedBooleanLiteral = (job == null ? false :
         job.getBoolean(ConfVars.HIVE_LAZYSIMPLE_EXTENDED_BOOLEAN_LITERAL.varname, false));
+    
+    String[] timestampFormatsArray =
+        HiveStringUtils.splitAndUnEscape(tbl.getProperty(serdeConstants.TIMESTAMP_FORMATS));
+    if (timestampFormatsArray != null) {
+      timestampFormats = Arrays.asList(timestampFormatsArray);
+    }
   }
   
   /**

@@ -50,6 +50,8 @@ import java.util.regex.Pattern;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.common.type.HiveIntervalDayTime;
+import org.apache.hadoop.hive.common.type.HiveIntervalYearMonth;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.TableType;
@@ -106,7 +108,7 @@ public class TestJdbcDriver2 {
   public static void setUpBeforeClass() throws SQLException, ClassNotFoundException{
     Class.forName(driverName);
     Connection con1 = getConnection("default");
-    System.setProperty(ConfVars.HIVE_SERVER2_LOGGING_OPERATION_VERBOSE.varname, "" + true);
+    System.setProperty(ConfVars.HIVE_SERVER2_LOGGING_OPERATION_LEVEL.varname, "verbose");
 
     Statement stmt1 = con1.createStatement();
     assertNotNull("Statement is null", stmt1);
@@ -891,6 +893,54 @@ public class TestJdbcDriver2 {
 
     // no more rows
     assertFalse(res.next());
+  }
+
+  @Test
+  public void testIntervalTypes() throws Exception {
+    Statement stmt = con.createStatement();
+
+    // Since interval types not currently supported as table columns, need to create them
+    // as expressions.
+    ResultSet res = stmt.executeQuery(
+        "select case when c17 is null then null else interval '1' year end as col1,"
+        + " c17 -  c17 as col2 from " + dataTypeTableName + " order by col1");
+    ResultSetMetaData meta = res.getMetaData();
+
+    assertEquals("col1", meta.getColumnLabel(1));
+    assertEquals(java.sql.Types.OTHER, meta.getColumnType(1));
+    assertEquals("interval_year_month", meta.getColumnTypeName(1));
+    assertEquals(11, meta.getColumnDisplaySize(1));
+    assertEquals(11, meta.getPrecision(1));
+    assertEquals(0, meta.getScale(1));
+    assertEquals(HiveIntervalYearMonth.class.getName(), meta.getColumnClassName(1));
+
+    assertEquals("col2", meta.getColumnLabel(2));
+    assertEquals(java.sql.Types.OTHER, meta.getColumnType(2));
+    assertEquals("interval_day_time", meta.getColumnTypeName(2));
+    assertEquals(29, meta.getColumnDisplaySize(2));
+    assertEquals(29, meta.getPrecision(2));
+    assertEquals(0, meta.getScale(2));
+    assertEquals(HiveIntervalDayTime.class.getName(), meta.getColumnClassName(2));
+
+    // row 1 - results should be null
+    assertTrue(res.next());
+    // skip the last (partitioning) column since it is always non-null
+    for (int i = 1; i < meta.getColumnCount(); i++) {
+      assertNull("Column " + i + " should be null", res.getObject(i));
+    }
+
+    // row 2 - results should be null
+    assertTrue(res.next());
+    for (int i = 1; i < meta.getColumnCount(); i++) {
+      assertNull("Column " + i + " should be null", res.getObject(i));
+    }
+
+    // row 3
+    assertTrue(res.next());
+    assertEquals("1-0", res.getString(1));
+    assertEquals(1, ((HiveIntervalYearMonth) res.getObject(1)).getYears());
+    assertEquals("0 00:00:00.000000000", res.getString(2));
+    assertEquals(0, ((HiveIntervalDayTime) res.getObject(2)).getDays());
   }
 
   private void doTestSelectAll(String tableName, int maxRows, int fetchSize) throws Exception {
@@ -1782,7 +1832,15 @@ public void testParseUrlHttpMode() throws SQLException, JdbcUriParseException,
     assertEquals(SET_COLUMN_NAME, md.getColumnLabel(1));
 
     //check if there is data in the resultset
-    assertTrue("Nothing returned by set -v", res.next());
+    int numLines = 0;
+    while (res.next()){
+      numLines++;
+      String rline = res.getString(1);
+      assertFalse("set output must not contain hidden variables such as the metastore password:"+rline,
+          rline.contains(HiveConf.ConfVars.METASTOREPWD.varname) && !(rline.contains(HiveConf.ConfVars.HIVE_CONF_HIDDEN_LIST.varname)));
+        // the only conf allowed to have the metastore pwd keyname is the hidden list configuration value
+    }
+    assertTrue("Nothing returned by set -v", numLines > 0);
 
     res.close();
     stmt.close();
@@ -2284,26 +2342,6 @@ public void testParseUrlHttpMode() throws SQLException, JdbcUriParseException,
     verifyFetchedLog(incrementalLogs, expectedLogs);
   }
 
-  /**
-   * Test getting query log when HS2 disable logging.
-   *
-   * @throws Exception
-   */
-  @Test
-  public void testGetQueryLogOnDisabledLog() throws Exception {
-    Statement setStmt = con.createStatement();
-    setStmt.execute("set hive.server2.logging.operation.enabled = false");
-    String sql = "select count(*) from " + tableName;
-    HiveStatement stmt = (HiveStatement)con.createStatement();
-    assertNotNull("Statement is null", stmt);
-    stmt.executeQuery(sql);
-    List<String> logs = stmt.getQueryLog(false, 10);
-    stmt.close();
-    assertTrue(logs.size() == 0);
-    setStmt.execute("set hive.server2.logging.operation.enabled = true");
-    setStmt.close();
-  }
-
   private void verifyFetchedLog(List<String> logs, String[] expectedLogs) {
     StringBuilder stringBuilder = new StringBuilder();
 
@@ -2314,6 +2352,22 @@ public void testParseUrlHttpMode() throws SQLException, JdbcUriParseException,
     String accumulatedLogs = stringBuilder.toString();
     for (String expectedLog : expectedLogs) {
       assertTrue(accumulatedLogs.contains(expectedLog));
+    }
+  }
+  @Test
+  public void testPrepareSetDate() throws Exception {
+    try {
+      String sql = "select * from " + dataTypeTableName + " where c20 = ?";
+      PreparedStatement ps = con.prepareStatement(sql);
+      java.sql.Date dtValue = java.sql.Date.valueOf("2013-01-01");
+      ps.setDate(1, dtValue);
+      ResultSet res = ps.executeQuery();
+      assertTrue(res.next());
+      assertEquals("2013-01-01", res.getString(20));
+      ps.close();
+    } catch (Exception e) {
+      e.printStackTrace();
+      fail(e.toString());
     }
   }
 }

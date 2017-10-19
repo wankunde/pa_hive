@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.hive.ql.exec;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -27,8 +28,12 @@ import java.util.Set;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.ql.exec.NodeUtils.Function;
+import org.apache.hadoop.hive.ql.plan.MapJoinDesc;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
 import org.apache.hadoop.mapred.OutputCollector;
+
+import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.Multimap;
 
 public class OperatorUtils {
 
@@ -76,6 +81,11 @@ public class OperatorUtils {
     return found.size() == 1 ? found.iterator().next() : null;
   }
 
+  public static <T> T findSingleOperatorUpstreamJoinAccounted(Operator<?> start, Class<T> clazz) {
+    Set<T> found = findOperatorsUpstreamJoinAccounted(start, clazz, new HashSet<T>());
+    return found.size() == 1 ? found.iterator().next(): null;
+  }
+
   public static <T> Set<T> findOperatorsUpstream(Collection<Operator<?>> starts, Class<T> clazz) {
     Set<T> found = new HashSet<T>();
     for (Operator<?> start : starts) {
@@ -96,6 +106,34 @@ public class OperatorUtils {
     }
     return found;
   }
+
+  public static <T> Set<T> findOperatorsUpstreamJoinAccounted(Operator<?> start, Class<T> clazz,
+      Set<T> found) {
+    if (clazz.isInstance(start)) {
+      found.add((T) start);
+    }
+    int onlyIncludeIndex = -1;
+    if (start instanceof AbstractMapJoinOperator) {
+      AbstractMapJoinOperator mapJoinOp = (AbstractMapJoinOperator) start;
+      MapJoinDesc desc = (MapJoinDesc) mapJoinOp.getConf();
+      onlyIncludeIndex = desc.getPosBigTable();
+    }
+    if (start.getParentOperators() != null) {
+      int i = 0;
+      for (Operator<?> parent : start.getParentOperators()) {
+        if (onlyIncludeIndex >= 0) {
+          if (onlyIncludeIndex == i) {
+            findOperatorsUpstream(parent, clazz, found);
+          }
+        } else {
+          findOperatorsUpstream(parent, clazz, found);
+        }
+        i++;
+      }
+    }
+    return found;
+  }
+
 
   public static void setChildrenCollector(List<Operator<? extends OperatorDesc>> childOperators, OutputCollector out) {
     if (childOperators == null) {
@@ -118,7 +156,7 @@ public class OperatorUtils {
       if(op.getName().equals(ReduceSinkOperator.getOperatorName())) {
         ReduceSinkOperator rs = ((ReduceSinkOperator)op);
         if (outMap.containsKey(rs.getConf().getOutputName())) {
-          LOG.info("Setting output collector: " + rs + " --> " 
+          LOG.info("Setting output collector: " + rs + " --> "
             + rs.getConf().getOutputName());
           rs.setOutputCollector(outMap.get(rs.getConf().getOutputName()));
         }
@@ -126,6 +164,60 @@ public class OperatorUtils {
         setChildrenCollector(op.getChildOperators(), outMap);
       }
     }
+  }
+
+  /**
+   * Starting at the input operator, finds the last operator in the stream that
+   * is an instance of the input class.
+   *
+   * @param op the starting operator
+   * @param clazz the class that the operator that we are looking for instantiates
+   * @return null if no such operator exists or multiple branches are found in
+   * the stream, the last operator otherwise
+   */
+  @SuppressWarnings("unchecked")
+  public static <T> T findLastOperator(Operator<?> op, Class<T> clazz) {
+    Operator<?> currentOp = op;
+    T lastOp = null;
+    while (currentOp != null) {
+      if (clazz.isInstance(currentOp)) {
+        lastOp = (T) currentOp;
+      }
+      if (currentOp.getChildOperators().size() == 1) {
+        currentOp = currentOp.getChildOperators().get(0);
+      }
+      else {
+        currentOp = null;
+      }
+    }
+    return lastOp;
+  }
+
+  /**
+   * Starting at the input operator, finds the last operator upstream that is
+   * an instance of the input class.
+   *
+   * @param op the starting operator
+   * @param clazz the class that the operator that we are looking for instantiates
+   * @return null if no such operator exists or multiple branches are found in
+   * the stream, the last operator otherwise
+   */
+  @SuppressWarnings("unchecked")
+  public static <T> T findLastOperatorUpstream(Operator<?> op, Class<T> clazz) {
+    Operator<?> currentOp = op;
+    T lastOp = null;
+    while (currentOp != null) {
+      if (clazz.isInstance(currentOp)) {
+        lastOp = (T) currentOp;
+      }
+      if (currentOp.getParentOperators().size() == 1) {
+        currentOp = currentOp.getParentOperators().get(0);
+      }
+      else {
+        currentOp = null;
+      }
+    }
+    return lastOp;
   }
 
   public static void iterateParents(Operator<?> operator, Function<Operator<?>> function) {
@@ -145,6 +237,78 @@ public class OperatorUtils {
   }
 
   public static boolean sameRowSchema(Operator<?> operator1, Operator<?> operator2) {
-	  return operator1.getSchema().equals(operator2.getSchema());
+    return operator1.getSchema().equals(operator2.getSchema());
+  }
+
+  /**
+   * Given an operator and a set of classes, it classifies the operators it finds
+   * in the stream depending on the classes they instantiate.
+   *
+   * If a given operator object is an instance of more than one of the input classes,
+   * e.g. the operator instantiates one of the classes in the input set that is a
+   * subclass of another class in the set, the operator will be associated to both
+   * classes in the output map.
+   *
+   * @param start the start operator
+   * @param classes the set of classes
+   * @return a multimap from each of the classes to the operators that instantiate
+   * them
+   */
+  public static Multimap<Class<? extends Operator<?>>, Operator<?>> classifyOperators(
+      Operator<?> start, Set<Class<? extends Operator<?>>> classes) {
+    ImmutableMultimap.Builder<Class<? extends Operator<?>>, Operator<?>> resultMap =
+        new ImmutableMultimap.Builder<Class<? extends Operator<?>>, Operator<?>>();
+    List<Operator<?>> ops = new ArrayList<Operator<?>>();
+    ops.add(start);
+    while (!ops.isEmpty()) {
+      List<Operator<?>> allChildren = new ArrayList<Operator<?>>();
+      for (Operator<?> op: ops) {
+        for (Class<? extends Operator<?>> clazz: classes) {
+          if (clazz.isInstance(op)) {
+            resultMap.put(clazz, op);
+          }
+        }
+        allChildren.addAll(op.getChildOperators());
+      }
+      ops = allChildren;
+    }
+    return resultMap.build();
+  }
+
+  /**
+   * Given an operator and a set of classes, it classifies the operators it finds
+   * upstream depending on the classes it instantiates.
+   *
+   * If a given operator object is an instance of more than one of the input classes,
+   * e.g. the operator instantiates one of the classes in the input set that is a
+   * subclass of another class in the set, the operator will be associated to both
+   * classes in the output map.
+   *
+   * @param start the start operator
+   * @param classes the set of classes
+   * @return a multimap from each of the classes to the operators that instantiate
+   * them
+   */
+  public static Multimap<Class<? extends Operator<?>>, Operator<?>> classifyOperatorsUpstream(
+      Operator<?> start, Set<Class<? extends Operator<?>>> classes) {
+    ImmutableMultimap.Builder<Class<? extends Operator<?>>, Operator<?>> resultMap =
+        new ImmutableMultimap.Builder<Class<? extends Operator<?>>, Operator<?>>();
+    List<Operator<?>> ops = new ArrayList<Operator<?>>();
+    ops.add(start);
+    while (!ops.isEmpty()) {
+      List<Operator<?>> allParent = new ArrayList<Operator<?>>();
+      for (Operator<?> op: ops) {
+        for (Class<? extends Operator<?>> clazz: classes) {
+          if (clazz.isInstance(op)) {
+            resultMap.put(clazz, op);
+          }
+        }
+        if (op.getParentOperators() != null) {
+          allParent.addAll(op.getParentOperators());
+        }
+      }
+      ops = allParent;
+    }
+    return resultMap.build();
   }
 }

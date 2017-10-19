@@ -40,12 +40,14 @@ import org.apache.hadoop.hive.ql.parse.SemanticException;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
 import org.apache.hadoop.mapred.OutputFormat;
+import org.apache.hadoop.hive.ql.plan.Explain.Level;
+
 
 /**
  * CreateTableDesc.
  *
  */
-@Explain(displayName = "Create Table")
+@Explain(displayName = "Create Table", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
 public class CreateTableDesc extends DDLDesc implements Serializable {
   private static final long serialVersionUID = 1L;
   private static Log LOG = LogFactory.getLog(CreateTableDesc.class);
@@ -76,6 +78,7 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
   List<List<String>> skewedColValues;
   boolean isStoredAsSubDirectories = false;
   boolean isTemporary = false;
+  private boolean replaceMode = false;
 
   public CreateTableDesc() {
   }
@@ -140,12 +143,12 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     return copy == null ? null : new ArrayList<T>(copy);
   }
 
-  @Explain(displayName = "columns")
+  @Explain(displayName = "columns", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public List<String> getColsString() {
     return Utilities.getFieldSchemaString(getCols());
   }
 
-  @Explain(displayName = "partition columns")
+  @Explain(displayName = "partition columns", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public List<String> getPartColsString() {
     return Utilities.getFieldSchemaString(getPartCols());
   }
@@ -159,7 +162,7 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     this.ifNotExists = ifNotExists;
   }
 
-  @Explain(displayName = "name")
+  @Explain(displayName = "name", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public String getTableName() {
     return tableName;
   }
@@ -188,7 +191,7 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     this.partCols = partCols;
   }
 
-  @Explain(displayName = "bucket columns")
+  @Explain(displayName = "bucket columns", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public List<String> getBucketCols() {
     return bucketCols;
   }
@@ -197,7 +200,7 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     this.bucketCols = bucketCols;
   }
 
-  @Explain(displayName = "# buckets")
+  @Explain(displayName = "# buckets", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public Integer getNumBucketsExplain() {
     if (numBuckets == -1) {
       return null;
@@ -268,7 +271,7 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     this.comment = comment;
   }
 
-  @Explain(displayName = "input format")
+  @Explain(displayName = "input format", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public String getInputFormat() {
     return inputFormat;
   }
@@ -277,7 +280,7 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     this.inputFormat = inputFormat;
   }
 
-  @Explain(displayName = "output format")
+  @Explain(displayName = "output format", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public String getOutputFormat() {
     return outputFormat;
   }
@@ -286,7 +289,7 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     this.outputFormat = outputFormat;
   }
 
-  @Explain(displayName = "storage handler")
+  @Explain(displayName = "storage handler", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public String getStorageHandler() {
     return storageHandler;
   }
@@ -549,4 +552,17 @@ public class CreateTableDesc extends DDLDesc implements Serializable {
     this.isTemporary = isTemporary;
   }
 
+  /**
+   * @param replaceMode Determine if this CreateTable should behave like a replace-into alter instead
+   */
+  public void setReplaceMode(boolean replaceMode) {
+    this.replaceMode = replaceMode;
+  }
+
+  /**
+   * @return true if this CreateTable should behave like a replace-into alter instead
+   */
+  public boolean getReplaceMode() {
+    return replaceMode;
+  }
 }

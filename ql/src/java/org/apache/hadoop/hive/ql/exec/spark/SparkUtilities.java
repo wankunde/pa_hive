@@ -21,9 +21,8 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.UUID;
 
-import org.apache.hadoop.conf.Configuration;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -77,13 +76,11 @@ public class SparkUtilities {
    * @throws IOException
    */
   public static URI uploadToHDFS(URI source, HiveConf conf) throws IOException {
-    Path localFile = new Path(source.getPath());
-    // give the uploaded file a UUID
-    Path remoteFile = new Path(SessionState.getHDFSSessionPath(conf),
-        UUID.randomUUID() + "-" + getFileName(source));
+    Path tmpDir = SessionState.getHDFSSessionPath(conf);
     FileSystem fileSystem = FileSystem.get(conf);
-    fileSystem.copyFromLocalFile(localFile, remoteFile);
-    Path fullPath = fileSystem.getFileStatus(remoteFile).getPath();
+    fileSystem.copyFromLocalFile(new Path(source.getPath()), tmpDir);
+    String filePath = tmpDir + File.separator + getFileName(source);
+    Path fullPath = fileSystem.getFileStatus(new Path(filePath)).getPath();
     return fullPath.toUri();
   }
 
@@ -98,22 +95,13 @@ public class SparkUtilities {
       return null;
     }
 
-    String[] splits = uri.getPath().split(File.separator);
-    return  splits[splits.length-1];
-  }
-
-  public static boolean isDedicatedCluster(Configuration conf) {
-    String master = conf.get("spark.master");
-    return master.startsWith("yarn-") || master.startsWith("local");
+    String name = FilenameUtils.getName(uri.getPath());
+    return name;
   }
 
   public static SparkSession getSparkSession(HiveConf conf,
       SparkSessionManager sparkSessionManager) throws HiveException {
     SparkSession sparkSession = SessionState.get().getSparkSession();
-
-    if (!conf.getBoolVar(HiveConf.ConfVars.SPARK_ENABLED)) {
-      throw new HiveException("Unsupported execution engine: Spark.  Please set hive.execution.engine=mr");
-    }
 
     // Spark configurations are updated close the existing session
     if (conf.getSparkConfigUpdated()) {

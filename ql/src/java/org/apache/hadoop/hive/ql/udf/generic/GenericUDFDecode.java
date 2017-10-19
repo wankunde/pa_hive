@@ -38,8 +38,9 @@ import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.PrimitiveObjectInspector.PrimitiveCategory;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.BinaryObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
-import org.apache.hadoop.hive.serde2.objectinspector.primitive.StringObjectInspector;
-import org.apache.hadoop.io.Text;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorUtils;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.VoidObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorUtils.PrimitiveGrouping;
 
 @Description(name = "decode",
     value = "_FUNC_(bin, str) - Decode the first argument using the second argument character set",
@@ -47,48 +48,62 @@ import org.apache.hadoop.io.Text;
         "'UTF-8', 'UTF-16BE', 'UTF-16LE', and 'UTF-16'. If either argument\n" +
         "is null, the result will also be null")
 public class GenericUDFDecode extends GenericUDF {
-  private transient CharsetDecoder decoder = null;
-  private transient BinaryObjectInspector bytesOI = null;
-  private transient StringObjectInspector charsetOI = null;
+  private transient CharsetDecoder decoder;
+  private transient PrimitiveObjectInspector bytesOI;
+  private transient PrimitiveObjectInspector charsetOI;
 
   @Override
   public ObjectInspector initialize(ObjectInspector[] arguments) throws UDFArgumentException {
     if (arguments.length != 2) {
-      throw new UDFArgumentLengthException("Encode() requires exactly two arguments");
+      throw new UDFArgumentLengthException("Decode() requires exactly two arguments");
     }
 
-    if (arguments[0].getCategory() != Category.PRIMITIVE ||
-        ((PrimitiveObjectInspector)arguments[0]).getPrimitiveCategory() != PrimitiveCategory.BINARY){
-      throw new UDFArgumentTypeException(0, "The first argument to Encode() must be a binary");
+    if (arguments[0].getCategory() != Category.PRIMITIVE){
+      throw new UDFArgumentTypeException(0, "The first argument to Decode() must be primitive");
     }
 
-    bytesOI = (BinaryObjectInspector) arguments[0];
+    PrimitiveCategory category = ((PrimitiveObjectInspector)arguments[0]).getPrimitiveCategory();
 
-    if (arguments[1].getCategory() != Category.PRIMITIVE ||
-        ((PrimitiveObjectInspector)arguments[1]).getPrimitiveCategory() != PrimitiveCategory.STRING){
-      throw new UDFArgumentTypeException(1, "The second argument to Encode() must be a string");
+    if (category == PrimitiveCategory.BINARY) {
+      bytesOI = (BinaryObjectInspector) arguments[0];
+    } else if(category == PrimitiveCategory.VOID) {
+      bytesOI = (VoidObjectInspector) arguments[0];
+    } else {
+      throw new UDFArgumentTypeException(0, "The first argument to Decode() must be binary");
     }
 
-    charsetOI = (StringObjectInspector) arguments[1];
-
-    // If the character set for encoding is constant, we can optimize that
-    StringObjectInspector charSetOI = (StringObjectInspector) arguments[1];
-    if (charSetOI instanceof ConstantObjectInspector){
-      String charSetName = ((Text) ((ConstantObjectInspector) charSetOI).getWritableConstantValue()).toString();
-      decoder = Charset.forName(charSetName).newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT);
+    if (arguments[1].getCategory() != Category.PRIMITIVE) {
+      throw new UDFArgumentTypeException(1, "The second argument to Decode() must be primitive");
     }
 
-    return (ObjectInspector) PrimitiveObjectInspectorFactory.javaStringObjectInspector;
+    charsetOI = (PrimitiveObjectInspector) arguments[1];
+
+    if (PrimitiveGrouping.STRING_GROUP != PrimitiveObjectInspectorUtils
+        .getPrimitiveGrouping(charsetOI.getPrimitiveCategory())) {
+      throw new UDFArgumentTypeException(1,
+          "The second argument to Decode() must be from string group");
+    }
+
+    // If the character set for decoding is constant, we can optimize that
+    if (arguments[1] instanceof ConstantObjectInspector) {
+      String charSetName = ((ConstantObjectInspector) arguments[1]).getWritableConstantValue()
+          .toString();
+      decoder = Charset.forName(charSetName).newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT);
+    }
+
+    return PrimitiveObjectInspectorFactory.javaStringObjectInspector;
   }
 
   @Override
   public Object evaluate(DeferredObject[] arguments) throws HiveException {
-    byte[] value = bytesOI.getPrimitiveJavaObject(arguments[0].get());
+    Object value = bytesOI.getPrimitiveJavaObject(arguments[0].get());
     if (value == null) {
       return null;
     }
 
-    ByteBuffer wrappedBytes = ByteBuffer.wrap(value);
+    ByteBuffer wrappedBytes = ByteBuffer.wrap((byte[])value);
     CharBuffer decoded;
     if (decoder != null){
       try {
@@ -97,7 +112,8 @@ public class GenericUDFDecode extends GenericUDF {
         throw new HiveException(e);
       }
     } else {
-      decoded = Charset.forName(charsetOI.getPrimitiveJavaObject(arguments[1].get())).decode(wrappedBytes);
+      String charSetName = PrimitiveObjectInspectorUtils.getString(arguments[1].get(), charsetOI);
+      decoded = Charset.forName(charSetName).decode(wrappedBytes);
     }
     return decoded.toString();
   }
@@ -105,10 +121,6 @@ public class GenericUDFDecode extends GenericUDF {
   @Override
   public String getDisplayString(String[] children) {
     assert (children.length == 2);
-    StringBuilder sb = new StringBuilder();
-    sb.append("encode(");
-    sb.append(children[0]).append(",");
-    sb.append(children[1]).append(")");
-    return sb.toString();
+    return getStandardDisplayString("decode", children, ",");
   }
 }

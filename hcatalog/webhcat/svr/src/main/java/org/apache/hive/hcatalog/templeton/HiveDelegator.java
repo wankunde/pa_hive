@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.exec.ExecuteException;
+import org.apache.hadoop.fs.Path;
 import org.apache.hive.hcatalog.templeton.tool.JobSubmissionConstants;
 import org.apache.hive.hcatalog.templeton.tool.TempletonControllerJob;
 import org.apache.hive.hcatalog.templeton.tool.TempletonUtils;
@@ -45,25 +46,28 @@ public class HiveDelegator extends LauncherDelegator {
   public EnqueueBean run(String user, Map<String, Object> userArgs,
                String execute, String srcFile, List<String> defines,
                List<String> hiveArgs, String otherFiles,
-               String statusdir, String callback, String completedUrl, boolean enablelog)
+               String statusdir, String callback, String completedUrl, boolean enablelog,
+               Boolean enableJobReconnect)
     throws NotAuthorizedException, BadParam, BusyException, QueueException,
     ExecuteException, IOException, InterruptedException
   {
     runAs = user;
     List<String> args = makeArgs(execute, srcFile, defines, hiveArgs, otherFiles, statusdir,
-                   completedUrl, enablelog);
+                   completedUrl, enablelog, enableJobReconnect);
 
     return enqueueController(user, userArgs, callback, args);
   }
 
   private List<String> makeArgs(String execute, String srcFile,
              List<String> defines, List<String> hiveArgs, String otherFiles,
-             String statusdir, String completedUrl, boolean enablelog)
+             String statusdir, String completedUrl, boolean enablelog,
+             Boolean enableJobReconnect)
     throws BadParam, IOException, InterruptedException
   {
     ArrayList<String> args = new ArrayList<String>();
     try {
-      args.addAll(makeBasicArgs(execute, srcFile, otherFiles, statusdir, completedUrl, enablelog));
+      args.addAll(makeBasicArgs(execute, srcFile, otherFiles, statusdir, completedUrl,
+          enablelog, enableJobReconnect));
       args.add("--");
       TempletonUtils.addCmdForWindows(args);
       addHiveMetaStoreTokenArg();
@@ -116,8 +120,8 @@ public class HiveDelegator extends LauncherDelegator {
 
   private List<String> makeBasicArgs(String execute, String srcFile, String otherFiles,
                                          String statusdir, String completedUrl,
-                                         boolean enablelog)
-    throws URISyntaxException, FileNotFoundException, IOException,
+                                         boolean enablelog, Boolean enableJobReconnect)
+    throws URISyntaxException, IOException,
     InterruptedException
   {
     ArrayList<String> args = new ArrayList<String>();
@@ -134,7 +138,7 @@ public class HiveDelegator extends LauncherDelegator {
     }
 
     args.addAll(makeLauncherArgs(appConf, statusdir, completedUrl, allFiles,
-                enablelog, JobType.HIVE));
+                enablelog, enableJobReconnect, JobType.HIVE));
 
     if (appConf.hiveArchive() != null && !appConf.hiveArchive().equals(""))
     {
@@ -142,6 +146,30 @@ public class HiveDelegator extends LauncherDelegator {
       args.add(appConf.hiveArchive());
     }
 
+    //ship additional artifacts, for example for Tez
+    String extras = appConf.get(AppConfig.HIVE_EXTRA_FILES); 
+    if(extras != null && extras.length() > 0) {
+      boolean foundFiles = false;
+      for(int i = 0; i < args.size(); i++) {
+        if(FILES.equals(args.get(i))) {
+          String value = args.get(i + 1);
+          args.set(i + 1, value + "," + extras);
+          foundFiles = true;
+        }
+      }
+      if(!foundFiles) {
+        args.add(FILES);
+        args.add(extras);
+      }
+      String[] extraFiles = appConf.getStrings(AppConfig.HIVE_EXTRA_FILES);
+      StringBuilder extraFileNames = new StringBuilder();
+      //now tell LaunchMapper which files it should add to HADOOP_CLASSPATH
+      for(String file : extraFiles) {
+        Path p = new Path(file);
+        extraFileNames.append(p.getName()).append(",");
+      }
+      addDef(args, JobSubmissionConstants.HADOOP_CLASSPATH_EXTRAS, extraFileNames.toString());
+    }
     return args;
   }
 }

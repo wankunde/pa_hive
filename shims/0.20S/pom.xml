@@ -19,7 +19,7 @@
   <parent>
     <groupId>org.apache.hive</groupId>
     <artifactId>hive</artifactId>
-    <version>1.1.0-cdh5.5.1</version>
+    <version>1.2.2</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
 
@@ -43,28 +43,15 @@
     <!-- inter-project -->
     <dependency>
       <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-common</artifactId>
-      <version>${hadoop-23.version}</version>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-core</artifactId>
-      <version>${hadoop-20S.version}</version>
-      <classifier>tests</classifier>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-core</artifactId>
       <version>${hadoop-20S.version}</version>
       <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-tools</artifactId>
+      <artifactId>hadoop-test</artifactId>
       <version>${hadoop-20S.version}</version>
-      <scope>provided</scope>
+      <optional>true</optional>
     </dependency>
- </dependencies>
+  </dependencies>
 </project>

@@ -30,6 +30,7 @@ import java.util.List;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.DefaultFileAccess;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
@@ -334,16 +335,16 @@ public final class FileUtils {
    * @param fs
    *          file system
    * @param path
-   * @return the argument path if it exists or a parent path exists. Returns
-   *         NULL root is only parent that exists
+   * @return FileStatus for argument path if it exists or the first ancestor in the path that exists
    * @throws IOException
    */
-  public static Path getPathOrParentThatExists(FileSystem fs, Path path) throws IOException {
-    if (!fs.exists(path)) {
-      Path parentPath = path.getParent();
-      return getPathOrParentThatExists(fs, parentPath);
+  public static FileStatus getPathOrParentThatExists(FileSystem fs, Path path) throws IOException {
+    FileStatus stat = FileUtils.getFileStatusOrNull(fs, path);
+    if (stat != null) {
+      return stat;
     }
-    return path;
+    Path parentPath = path.getParent();
+    return getPathOrParentThatExists(fs, parentPath);
   }
 
   /**
@@ -634,14 +635,6 @@ public final class FileUtils {
                                Path destPath, boolean inheritPerms,
                                Configuration conf) throws IOException {
     LOG.info("Renaming " + sourcePath + " to " + destPath);
-
-    // If destPath directory exists, rename call will move the sourcePath
-    // into destPath without failing. So check it before renaming.
-    if (fs.exists(destPath)) {
-      throw new IOException("Cannot rename the source path. The destination "
-          + "path already exists.");
-    }
-
     if (!inheritPerms) {
       //just rename the directory
       return fs.rename(sourcePath, destPath);
@@ -750,4 +743,20 @@ public final class FileUtils {
 
   }
 
+  /**
+   * Attempts to get file status.  This method differs from the FileSystem API in that it returns
+   * null instead of throwing FileNotFoundException if the path does not exist.
+   *
+   * @param fs file system to check
+   * @param path file system path to check
+   * @return FileStatus for path or null if path does not exist
+   * @throws IOException if there is an I/O error
+   */
+  public static FileStatus getFileStatusOrNull(FileSystem fs, Path path) throws IOException {
+    try {
+      return fs.getFileStatus(path);
+    } catch (FileNotFoundException e) {
+      return null;
+    }
+  }
 }

@@ -80,7 +80,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.hive.thrift.HadoopThriftAuthBridge;
-import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hive.common.util.ReflectionUtil;
 
 import javax.annotation.Nullable;
 
@@ -194,6 +194,16 @@ public class MetaStoreUtils {
       FileStatus[] fileStatus, boolean newDir, boolean forceRecompute) throws MetaException {
 
     Map<String,String> params = tbl.getParameters();
+
+    if ((params!=null) && params.containsKey(StatsSetupConst.DO_NOT_UPDATE_STATS)){
+      boolean doNotUpdateStats = Boolean.valueOf(params.get(StatsSetupConst.DO_NOT_UPDATE_STATS));
+      params.remove(StatsSetupConst.DO_NOT_UPDATE_STATS);
+      tbl.setParameters(params); // to make sure we remove this marker property
+      if (doNotUpdateStats){
+        return false;
+      }
+    }
+
     boolean updated = false;
     if (forceRecompute ||
         params == null ||
@@ -372,7 +382,7 @@ public class MetaStoreUtils {
       return null;
     }
     try {
-      Deserializer deserializer = ReflectionUtils.newInstance(conf.getClassByName(lib).
+      Deserializer deserializer = ReflectionUtil.newInstance(conf.getClassByName(lib).
               asSubclass(Deserializer.class), conf);
       if (skipConfError) {
         SerDeUtils.initializeSerDeWithoutErrorCheck(deserializer, conf,
@@ -419,7 +429,7 @@ public class MetaStoreUtils {
       org.apache.hadoop.hive.metastore.api.Table table) throws MetaException {
     String lib = part.getSd().getSerdeInfo().getSerializationLib();
     try {
-      Deserializer deserializer = ReflectionUtils.newInstance(conf.getClassByName(lib).
+      Deserializer deserializer = ReflectionUtil.newInstance(conf.getClassByName(lib).
         asSubclass(Deserializer.class), conf);
       SerDeUtils.initializeSerDe(deserializer, conf, MetaStoreUtils.getTableMetadata(table),
                                  MetaStoreUtils.getPartitionMetadata(part, table));
@@ -620,10 +630,10 @@ public class MetaStoreUtils {
    */
   static public boolean validateColumnType(String type) {
     int last = 0;
-    boolean lastAlphaDigit = Character.isLetterOrDigit(type.charAt(last));
+    boolean lastAlphaDigit = isValidTypeChar(type.charAt(last));
     for (int i = 1; i <= type.length(); i++) {
       if (i == type.length()
-          || Character.isLetterOrDigit(type.charAt(i)) != lastAlphaDigit) {
+          || isValidTypeChar(type.charAt(i)) != lastAlphaDigit) {
         String token = type.substring(last, i);
         last = i;
         if (!hiveThriftTypeMap.contains(token)) {
@@ -633,6 +643,10 @@ public class MetaStoreUtils {
       }
     }
     return true;
+  }
+
+  private static boolean isValidTypeChar(char c) {
+    return Character.isLetterOrDigit(c) || c == '_';
   }
 
   public static String validateSkewedColNames(List<String> cols) {
@@ -720,6 +734,12 @@ public class MetaStoreUtils {
             "timestamp");
     typeToThriftTypeMap.put(
         org.apache.hadoop.hive.serde.serdeConstants.DECIMAL_TYPE_NAME, "decimal");
+    typeToThriftTypeMap.put(
+        org.apache.hadoop.hive.serde.serdeConstants.INTERVAL_YEAR_MONTH_TYPE_NAME,
+        org.apache.hadoop.hive.serde.serdeConstants.INTERVAL_YEAR_MONTH_TYPE_NAME);
+    typeToThriftTypeMap.put(
+        org.apache.hadoop.hive.serde.serdeConstants.INTERVAL_DAY_TIME_TYPE_NAME,
+        org.apache.hadoop.hive.serde.serdeConstants.INTERVAL_DAY_TIME_TYPE_NAME);
   }
 
   static Set<String> hiveThriftTypeMap; //for validation
@@ -1091,6 +1111,17 @@ public class MetaStoreUtils {
         sb.append(",");
       }
       sb.append(fieldSchemas.get(i).getType());
+    }
+    return sb.toString();
+  }
+
+  public static String getColumnCommentsFromFieldSchema(List<FieldSchema> fieldSchemas) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < fieldSchemas.size(); i++) {
+      if (i > 0) {
+        sb.append(SerDeUtils.COLUMN_COMMENTS_DELIMITER);
+      }
+      sb.append(fieldSchemas.get(i).getComment());
     }
     return sb.toString();
   }

@@ -24,22 +24,23 @@ import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.security.AccessControlException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.crypto.key.KeyProvider;
 import org.apache.hadoop.crypto.key.KeyProvider.Options;
-import org.apache.hadoop.crypto.key.KeyProviderFactory;
+import org.apache.hadoop.crypto.key.KeyProviderCryptoExtension;
 import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.DefaultFileAccess;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -62,6 +63,7 @@ import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.client.HdfsAdmin;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
@@ -73,6 +75,7 @@ import org.apache.hadoop.mapred.MiniMRCluster;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.WebHCatJTShim23;
+import org.apache.hadoop.mapred.lib.TotalOrderPartitioner;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.JobID;
@@ -85,10 +88,8 @@ import org.apache.hadoop.mapreduce.task.JobContextImpl;
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.authentication.util.KerberosName;
+import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.tools.DistCp;
-import org.apache.hadoop.tools.DistCpOptions;
-import org.apache.hadoop.tools.DistCpOptions.FileAttribute;
 import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
@@ -106,15 +107,28 @@ public class Hadoop23Shims extends HadoopShimsSecure {
 
   HadoopShims.MiniDFSShim cluster = null;
   final boolean zeroCopy;
+  final boolean storagePolicy;
 
   public Hadoop23Shims() {
     boolean zcr = false;
+    boolean storage = false;
     try {
       Class.forName("org.apache.hadoop.fs.CacheFlag", false,
           ShimLoader.class.getClassLoader());
       zcr = true;
     } catch (ClassNotFoundException ce) {
     }
+    
+    if (zcr) {
+      // in-memory HDFS is only available after zcr
+      try {
+        Class.forName("org.apache.hadoop.hdfs.protocol.BlockStoragePolicy",
+            false, ShimLoader.class.getClassLoader());
+        storage = true;
+      } catch (ClassNotFoundException ce) {
+      }
+    }
+    this.storagePolicy = storage;
     this.zeroCopy = zcr;
   }
 
@@ -146,7 +160,8 @@ public class Hadoop23Shims extends HadoopShimsSecure {
   public String getTaskAttemptLogUrl(JobConf conf,
     String taskTrackerHttpAddress, String taskAttemptId)
     throws MalformedURLException {
-    if (isMR2()) {
+    if (conf.get("mapreduce.framework.name") != null
+      && conf.get("mapreduce.framework.name").equals("yarn")) {
       // if the cluster is running in MR2 mode, return null
       LOG.warn("Can't fetch tasklog: TaskLogServlet is not supported in MR2 mode.");
       return null;
@@ -197,50 +212,44 @@ public class Hadoop23Shims extends HadoopShimsSecure {
   }
 
   @Override
-  public boolean isLocalMode(Configuration conf) {
-    if (isMR2()) {
-      return "local".equals(conf.get("mapreduce.framework.name"));
+  public void startPauseMonitor(Configuration conf) {
+    try {
+      Class.forName("org.apache.hadoop.util.JvmPauseMonitor");
+      org.apache.hadoop.util.JvmPauseMonitor pauseMonitor = new org.apache.hadoop.util
+          .JvmPauseMonitor(conf);
+      pauseMonitor.start();
+    } catch (Throwable t) {
+      LOG.warn("Could not initiate the JvmPauseMonitor thread." + " GCs and Pauses may not be " +
+          "warned upon.", t);
     }
-    return "local".equals(conf.get("mapred.job.tracker"));
+  }
+
+  @Override
+  public boolean isLocalMode(Configuration conf) {
+    return "local".equals(conf.get("mapreduce.framework.name"));
   }
 
   @Override
   public String getJobLauncherRpcAddress(Configuration conf) {
-    if (isMR2()) {
-      return conf.get("yarn.resourcemanager.address");
-    } else {
-      return conf.get("mapred.job.tracker");
-    }
+    return conf.get("yarn.resourcemanager.address");
   }
 
   @Override
   public void setJobLauncherRpcAddress(Configuration conf, String val) {
     if (val.equals("local")) {
       // LocalClientProtocolProvider expects both parameters to be 'local'.
-      if (isMR2()) {
-        conf.set("mapreduce.framework.name", val);
-        conf.set("mapreduce.jobtracker.address", val);
-      } else {
-        conf.set("mapred.job.tracker", val);
-      }
+      conf.set("mapreduce.framework.name", val);
+      conf.set("mapreduce.jobtracker.address", val);
     }
     else {
-      if (isMR2()) {
-        conf.set("mapreduce.framework.name", "yarn");
-        conf.set("yarn.resourcemanager.address", val);
-      } else {
-        conf.set("mapred.job.tracker", val);
-      }
+      conf.set("mapreduce.framework.name", "yarn");
+      conf.set("yarn.resourcemanager.address", val);
     }
   }
 
   @Override
   public String getJobLauncherHttpAddress(Configuration conf) {
-    if (isMR2()) {
-      return conf.get("yarn.resourcemanager.webapp.address");
-    } else {
-      return conf.get("mapred.job.tracker.http.address");
-    }
+    return conf.get("yarn.resourcemanager.webapp.address");
   }
 
   protected boolean isExtendedAclEnabled(Configuration conf) {
@@ -265,18 +274,7 @@ public class Hadoop23Shims extends HadoopShimsSecure {
 
   @Override
   public void setTotalOrderPartitionFile(JobConf jobConf, Path partitionFile){
-    try {
-      Class<?> clazz = Class.forName("org.apache.hadoop.mapred.lib.TotalOrderPartitioner");
-      try {
-        java.lang.reflect.Method method = clazz.getMethod("setPartitionFile", Configuration.class, Path.class);
-        method.invoke(null, jobConf, partitionFile);
-      } catch(NoSuchMethodException nsme) {
-        java.lang.reflect.Method method = clazz.getMethod("setPartitionFile", JobConf.class, Path.class);
-        method.invoke(null, jobConf, partitionFile);
-      }
-    } catch(Exception e) {
-      throw new IllegalStateException("Unable to find TotalOrderPartitioner.setPartitionFile", e);
-    }
+    TotalOrderPartitioner.setPartitionFile(jobConf, partitionFile);
   }
 
   @Override
@@ -358,8 +356,6 @@ public class Hadoop23Shims extends HadoopShimsSecure {
     public void setupConfiguration(Configuration conf) {
       JobConf jConf = mr.createJobConf();
       for (Map.Entry<String, String> pair: jConf) {
-        // TODO figure out why this was wrapped in
-        // if(!"mapred.reduce.tasks".equalsIgnoreCase(pair.getKey()))
         conf.set(pair.getKey(), pair.getValue());
       }
     }
@@ -528,7 +524,7 @@ public class Hadoop23Shims extends HadoopShimsSecure {
 
     // Need to set the client's KeyProvider to the NN's for JKS,
     // else the updates do not get flushed properly
-    KeyProvider keyProvider = miniDFSCluster.getNameNode().getNamesystem().getProvider();
+    KeyProviderCryptoExtension keyProvider =  miniDFSCluster.getNameNode().getNamesystem().getProvider();
     if (keyProvider != null) {
       miniDFSCluster.getFileSystem().getClient().setKeyProvider(keyProvider);
     }
@@ -612,15 +608,8 @@ public class Hadoop23Shims extends HadoopShimsSecure {
     @Override
     public org.apache.hadoop.mapred.JobContext createJobContext(org.apache.hadoop.mapred.JobConf conf,
                                                                 org.apache.hadoop.mapreduce.JobID jobId, Progressable progressable) {
-      try {
-        java.lang.reflect.Constructor construct = org.apache.hadoop.mapred.JobContextImpl.class.getDeclaredConstructor(
-          org.apache.hadoop.mapred.JobConf.class, org.apache.hadoop.mapreduce.JobID.class, Progressable.class);
-        construct.setAccessible(true);
-        return (org.apache.hadoop.mapred.JobContext) construct.newInstance(
-                new JobConf(conf), jobId, progressable);
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
+      return new org.apache.hadoop.mapred.JobContextImpl(
+              new JobConf(conf), jobId, progressable);
     }
 
     @Override
@@ -642,23 +631,13 @@ public class Hadoop23Shims extends HadoopShimsSecure {
 
     @Override
     public String getPropertyName(PropertyName name) {
-      boolean mr2 = isMR2();
       switch (name) {
         case CACHE_ARCHIVES:
-          if(mr2) {
-            return "mapreduce.job.cache.archives";
-          }
-          return "mapred.cache.archives";
+          return MRJobConfig.CACHE_ARCHIVES;
         case CACHE_FILES:
-          if(mr2) {
-            return "mapreduce.job.cache.files";
-          }
-          return "mapred.cache.files";
+          return MRJobConfig.CACHE_FILES;
         case CACHE_SYMLINK:
-          if(mr2) {
-            return "mapreduce.job.cache.symlink.create";
-          }
-          return "mapred.create.symlink";
+          return MRJobConfig.CACHE_SYMLINK;
         case CLASSPATH_ARCHIVES:
           return MRJobConfig.CLASSPATH_ARCHIVES;
         case CLASSPATH_FILES:
@@ -733,8 +712,7 @@ public class Hadoop23Shims extends HadoopShimsSecure {
         aclStatus = fs.getAclStatus(file);
       } catch (Exception e) {
         LOG.info("Skipping ACL inheritance: File system for path " + file + " " +
-                "does not support ACLs but dfs.namenode.acls.enabled is set to true. ");
-        LOG.debug("The details are: " + e, e);
+                "does not support ACLs but dfs.namenode.acls.enabled is set to true: " + e, e);
       }
     }
     return new Hadoop23FileStatus(fileStatus, aclStatus);
@@ -748,31 +726,29 @@ public class Hadoop23Shims extends HadoopShimsSecure {
     try {
       FsShell fsShell = new FsShell();
       fsShell.setConf(conf);
-      //If there is no group of a file, no need to call chgrp
-      if (group != null && !group.isEmpty()) {
-        run(fsShell, new String[]{"-chgrp", "-R", group, target.toString()});
-      }
+      run(fsShell, new String[]{"-chgrp", "-R", group, target.toString()});
 
       if (isExtendedAclEnabled(conf)) {
         //Attempt extended Acl operations only if its enabled, 8791but don't fail the operation regardless.
         try {
           AclStatus aclStatus = ((Hadoop23FileStatus) sourceStatus).getAclStatus();
-          List<AclEntry> aclEntries = aclStatus.getEntries();
-          removeBaseAclEntries(aclEntries);
+          if (aclStatus != null) {
+            List<AclEntry> aclEntries = aclStatus.getEntries();
+            removeBaseAclEntries(aclEntries);
 
-          //the ACL api's also expect the tradition user/group/other permission in the form of ACL
-          FsPermission sourcePerm = sourceStatus.getFileStatus().getPermission();
-          aclEntries.add(newAclEntry(AclEntryScope.ACCESS, AclEntryType.USER, sourcePerm.getUserAction()));
-          aclEntries.add(newAclEntry(AclEntryScope.ACCESS, AclEntryType.GROUP, sourcePerm.getGroupAction()));
-          aclEntries.add(newAclEntry(AclEntryScope.ACCESS, AclEntryType.OTHER, sourcePerm.getOtherAction()));
+            //the ACL api's also expect the tradition user/group/other permission in the form of ACL
+            FsPermission sourcePerm = sourceStatus.getFileStatus().getPermission();
+            aclEntries.add(newAclEntry(AclEntryScope.ACCESS, AclEntryType.USER, sourcePerm.getUserAction()));
+            aclEntries.add(newAclEntry(AclEntryScope.ACCESS, AclEntryType.GROUP, sourcePerm.getGroupAction()));
+            aclEntries.add(newAclEntry(AclEntryScope.ACCESS, AclEntryType.OTHER, sourcePerm.getOtherAction()));
 
-          //construct the -setfacl command
-          String aclEntry = Joiner.on(",").join(aclStatus.getEntries());
-          run(fsShell, new String[]{"-setfacl", "-R", "--set", aclEntry, target.toString()});
+            //construct the -setfacl command
+            String aclEntry = Joiner.on(",").join(aclStatus.getEntries());
+            run(fsShell, new String[]{"-setfacl", "-R", "--set", aclEntry, target.toString()});
+          }
         } catch (Exception e) {
           LOG.info("Skipping ACL inheritance: File system for path " + target + " " +
-                  "does not support ACLs but dfs.namenode.acls.enabled is set to true. ");
-          LOG.debug("The details are: " + e, e);
+                  "does not support ACLs but dfs.namenode.acls.enabled is set to true: " + e, e);
         }
       } else {
         String permission = Integer.toString(sourceStatus.getFileStatus().getPermission().toShort(), 8);
@@ -848,10 +824,6 @@ public class Hadoop23Shims extends HadoopShimsSecure {
   });
   }
 
-  private boolean isMR2() {
-    return org.apache.hadoop.mapred.MRVersion.isMR2();
-  }
-
   class ProxyFileSystem23 extends ProxyFileSystem {
     public ProxyFileSystem23(FileSystem fs) {
       super(fs);
@@ -920,33 +892,18 @@ public class Hadoop23Shims extends HadoopShimsSecure {
   public Map<String, String> getHadoopConfNames() {
     Map<String, String> ret = new HashMap<String, String>();
     ret.put("HADOOPFS", "fs.defaultFS");
-    if (isMR2()) {
-      ret.put("HADOOPMAPFILENAME", "mapreduce.map.input.file");
-      ret.put("HADOOPMAPREDINPUTDIR", "mapreduce.input.fileinputformat.inputdir");
-      ret.put("HADOOPMAPREDINPUTDIRRECURSIVE", "mapreduce.input.fileinputformat.input.dir.recursive");
-      ret.put("MAPREDMAXSPLITSIZE", "mapreduce.input.fileinputformat.split.maxsize");
-      ret.put("MAPREDMINSPLITSIZE", "mapreduce.input.fileinputformat.split.minsize");
-      ret.put("MAPREDMINSPLITSIZEPERNODE", "mapreduce.input.fileinputformat.split.minsize.per.node");
-      ret.put("MAPREDMINSPLITSIZEPERRACK", "mapreduce.input.fileinputformat.split.minsize.per.rack");
-      ret.put("HADOOPNUMREDUCERS", "mapreduce.job.reduces");
-      ret.put("HADOOPJOBNAME", "mapreduce.job.name");
-      ret.put("HADOOPSPECULATIVEEXECREDUCERS", "mapreduce.reduce.speculative");
-      ret.put("MAPREDSETUPCLEANUPNEEDED", "mapreduce.job.committer.setup.cleanup.needed");
-      ret.put("MAPREDTASKCLEANUPNEEDED", "mapreduce.job.committer.task.cleanup.needed");
-    } else {
-      ret.put("HADOOPMAPFILENAME", "map.input.file");
-      ret.put("HADOOPMAPREDINPUTDIR", "mapred.input.dir");
-      ret.put("HADOOPMAPREDINPUTDIRRECURSIVE", "mapred.input.dir.recursive");
-      ret.put("MAPREDMAXSPLITSIZE", "mapred.max.split.size");
-      ret.put("MAPREDMINSPLITSIZE", "mapred.min.split.size");
-      ret.put("MAPREDMINSPLITSIZEPERNODE", "mapred.min.split.size.per.node");
-      ret.put("MAPREDMINSPLITSIZEPERRACK", "mapred.min.split.size.per.rack");
-      ret.put("HADOOPNUMREDUCERS", "mapred.reduce.tasks");
-      ret.put("HADOOPJOBNAME", "mapred.job.name");
-      ret.put("HADOOPSPECULATIVEEXECREDUCERS", "mapred.reduce.tasks.speculative.execution");
-      ret.put("MAPREDSETUPCLEANUPNEEDED", "mapred.committer.job.setup.cleanup.needed");
-      ret.put("MAPREDTASKCLEANUPNEEDED", "mapreduce.job.committer.task.cleanup.needed");
-    }
+    ret.put("HADOOPMAPFILENAME", "mapreduce.map.input.file");
+    ret.put("HADOOPMAPREDINPUTDIR", "mapreduce.input.fileinputformat.inputdir");
+    ret.put("HADOOPMAPREDINPUTDIRRECURSIVE", "mapreduce.input.fileinputformat.input.dir.recursive");
+    ret.put("MAPREDMAXSPLITSIZE", "mapreduce.input.fileinputformat.split.maxsize");
+    ret.put("MAPREDMINSPLITSIZE", "mapreduce.input.fileinputformat.split.minsize");
+    ret.put("MAPREDMINSPLITSIZEPERNODE", "mapreduce.input.fileinputformat.split.minsize.per.node");
+    ret.put("MAPREDMINSPLITSIZEPERRACK", "mapreduce.input.fileinputformat.split.minsize.per.rack");
+    ret.put("HADOOPNUMREDUCERS", "mapreduce.job.reduces");
+    ret.put("HADOOPJOBNAME", "mapreduce.job.name");
+    ret.put("HADOOPSPECULATIVEEXECREDUCERS", "mapreduce.reduce.speculative");
+    ret.put("MAPREDSETUPCLEANUPNEEDED", "mapreduce.job.committer.setup.cleanup.needed");
+    ret.put("MAPREDTASKCLEANUPNEEDED", "mapreduce.job.committer.task.cleanup.needed");
     return ret;
  }
 
@@ -1037,8 +994,10 @@ public class Hadoop23Shims extends HadoopShimsSecure {
     final int maxDepth = 20;
     Throwable curErr = err;
     for (int idx = 0; curErr != null && idx < maxDepth; ++idx) {
+      // fs.permission.AccessControlException removed by HADOOP-11356, but Hive users on older
+      // Hadoop versions may still see this exception .. have to reference by name.
       if (curErr instanceof org.apache.hadoop.security.AccessControlException
-          || curErr instanceof org.apache.hadoop.fs.permission.AccessControlException) {
+          || curErr.getClass().getName().equals("org.apache.hadoop.fs.permission.AccessControlException")) {
         Exception newErr = new AccessControlException(curErr.getMessage());
         newErr.initCause(err);
         return newErr;
@@ -1137,19 +1096,92 @@ public class Hadoop23Shims extends HadoopShimsSecure {
     }
   }
 
+
+  public static class StoragePolicyShim implements HadoopShims.StoragePolicyShim {
+
+    private final DistributedFileSystem dfs;
+
+    public StoragePolicyShim(DistributedFileSystem fs) {
+      this.dfs = fs;
+    }
+
+    @Override
+    public void setStoragePolicy(Path path, StoragePolicyValue policy)
+        throws IOException {
+      switch (policy) {
+      case MEMORY: {
+        dfs.setStoragePolicy(path, HdfsConstants.MEMORY_STORAGE_POLICY_NAME);
+        break;
+      }
+      case SSD: {
+        dfs.setStoragePolicy(path, HdfsConstants.ALLSSD_STORAGE_POLICY_NAME);
+        break;
+      }
+      case DEFAULT: {
+        /* do nothing */
+        break;
+      }
+      default:
+        throw new IllegalArgumentException("Unknown storage policy " + policy);
+      }
+    }
+  }
+    
+
+  @Override
+  public HadoopShims.StoragePolicyShim getStoragePolicyShim(FileSystem fs) {
+    if (!storagePolicy) {
+      return null;
+    }
+    try {
+      return new StoragePolicyShim((DistributedFileSystem) fs);
+    } catch (ClassCastException ce) {
+      return null;
+    }
+  }
+
   @Override
   public boolean runDistCp(Path src, Path dst, Configuration conf) throws IOException {
-    DistCpOptions options = new DistCpOptions(Collections.singletonList(src), dst);
-    options.setSyncFolder(true);
-    options.setSkipCRC(true);
-    options.preserve(FileAttribute.BLOCKSIZE);
+    int rc;
+
+    // Creates the command-line parameters for distcp
+    String[] params = {"-update", "-skipcrccheck", src.toString(), dst.toString()};
+
     try {
-      DistCp distcp = new DistCp(conf, options);
-      distcp.execute();
-      return true;
+      Class clazzDistCp = Class.forName("org.apache.hadoop.tools.DistCp");
+      Constructor c = clazzDistCp.getConstructor();
+      c.setAccessible(true);
+      Tool distcp = (Tool)c.newInstance();
+      distcp.setConf(conf);
+      rc = distcp.run(params);
+    } catch (ClassNotFoundException e) {
+      throw new IOException("Cannot find DistCp class package: " + e.getMessage());
+    } catch (NoSuchMethodException e) {
+      throw new IOException("Cannot get DistCp constructor: " + e.getMessage());
     } catch (Exception e) {
       throw new IOException("Cannot execute DistCp process: " + e, e);
     }
+
+    return (0 == rc);
+  }
+
+  private static Boolean hdfsEncryptionSupport;
+
+  public static boolean isHdfsEncryptionSupported() {
+    if (hdfsEncryptionSupport == null) {
+      Method m = null;
+
+      try {
+        m = HdfsAdmin.class.getMethod("getEncryptionZoneForPath", Path.class);
+      } catch (NoSuchMethodException e) {
+        // This version of Hadoop does not support HdfsAdmin.getEncryptionZoneForPath().
+        // Hadoop 2.6.0 introduces this new method.
+      }
+
+      hdfsEncryptionSupport = (m != null);
+    }
+
+    return hdfsEncryptionSupport;
   }
 
   public class HdfsEncryptionShim implements HadoopShims.HdfsEncryptionShim {
@@ -1299,15 +1331,33 @@ public class Hadoop23Shims extends HadoopShimsSecure {
 
   @Override
   public HadoopShims.HdfsEncryptionShim createHdfsEncryptionShim(FileSystem fs, Configuration conf) throws IOException {
-    URI uri = fs.getUri();
-    if ("hdfs".equals(uri.getScheme())) {
-      return new HdfsEncryptionShim(uri, conf);
+    if (isHdfsEncryptionSupported()) {
+      URI uri = fs.getUri();
+      if ("hdfs".equals(uri.getScheme())) {
+        return new HdfsEncryptionShim(uri, conf);
+      }
     }
+
     return new HadoopShims.NoopHdfsEncryptionShim();
   }
 
   @Override
   public Path getPathWithoutSchemeAndAuthority(Path path) {
     return Path.getPathWithoutSchemeAndAuthority(path);
+  }
+
+  @Override
+  public int readByteBuffer(FSDataInputStream file, ByteBuffer dest) throws IOException {
+    int pos = dest.position();
+    int result = file.read(dest);
+    if (result > 0) {
+      // Ensure this explicitly since versions before 2.7 read doesn't do it.
+      dest.position(pos + result);
+    }
+    return result;
+  }
+  public void addDelegationTokens(FileSystem fs, Credentials cred, String uname) throws IOException {
+    // Use method addDelegationTokens instead of getDelegationToken to get all the tokens including KMS.
+    fs.addDelegationTokens(uname, cred);
   }
 }

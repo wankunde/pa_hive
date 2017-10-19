@@ -28,11 +28,11 @@ import com.google.common.base.Preconditions;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.common.JavaUtils;
 import org.apache.hadoop.hive.ql.io.merge.MergeFileMapper;
 import org.apache.hadoop.hive.ql.io.merge.MergeFileOutputFormat;
 import org.apache.hadoop.hive.ql.io.merge.MergeFileWork;
 import org.apache.hadoop.hive.ql.log.PerfLogger;
-import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.mapred.FileOutputFormat;
 import org.apache.hadoop.mapred.Partitioner;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -61,7 +61,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 @SuppressWarnings("rawtypes")
 public class SparkPlanGenerator {
   private static final String CLASS_NAME = SparkPlanGenerator.class.getName();
-  private final PerfLogger perfLogger = SessionState.getPerfLogger();
+  private final PerfLogger perfLogger = PerfLogger.getPerfLogger();
   private static final Log LOG = LogFactory.getLog(SparkPlanGenerator.class);
 
   private JavaSparkContext sc;
@@ -168,7 +168,7 @@ public class SparkPlanGenerator {
 
     Class inputFormatClass;
     try {
-      inputFormatClass = Class.forName(inpFormat);
+      inputFormatClass = JavaUtils.loadClass(inpFormat);
     } catch (ClassNotFoundException e) {
       String message = "Failed to load specified input format class:"
           + inpFormat;
@@ -246,7 +246,7 @@ public class SparkPlanGenerator {
     HiveConf.setVar(cloned, HiveConf.ConfVars.PLAN, "");
     try {
       cloned.setPartitionerClass((Class<? extends Partitioner>)
-          (Class.forName(HiveConf.getVar(cloned, HiveConf.ConfVars.HIVEPARTITIONER))));
+          JavaUtils.loadClass(HiveConf.getVar(cloned, HiveConf.ConfVars.HIVEPARTITIONER)));
     } catch (ClassNotFoundException e) {
       String msg = "Could not find partitioner class: " + e.getMessage()
         + " which is specified by: " + HiveConf.ConfVars.HIVEPARTITIONER.varname;

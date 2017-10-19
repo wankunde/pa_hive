@@ -117,6 +117,36 @@ STAGE PLANS:
                         serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
                         name: default.union_subq_union
           TableScan
+            Union
+              Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
+              Select Operator
+                expressions: UDFToInteger(_col0) (type: int), _col1 (type: string)
+                outputColumnNames: _col0, _col1
+                Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
+                File Output Operator
+                  compressed: false
+                  Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
+                  table:
+                      input format: org.apache.hadoop.mapred.TextInputFormat
+                      output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                      serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+                      name: default.union_subq_union
+          TableScan
+            Union
+              Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
+              Select Operator
+                expressions: UDFToInteger(_col0) (type: int), _col1 (type: string)
+                outputColumnNames: _col0, _col1
+                Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
+                File Output Operator
+                  compressed: false
+                  Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
+                  table:
+                      input format: org.apache.hadoop.mapred.TextInputFormat
+                      output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                      serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+                      name: default.union_subq_union
+          TableScan
             alias: src
             Statistics: Num rows: 500 Data size: 5312 Basic stats: COMPLETE Column stats: NONE
             Select Operator
@@ -137,36 +167,6 @@ STAGE PLANS:
                         output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
                         serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
                         name: default.union_subq_union
-          TableScan
-            Union
-              Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
-              Select Operator
-                expressions: UDFToInteger(_col0) (type: int), _col1 (type: string)
-                outputColumnNames: _col0, _col1
-                Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
-                File Output Operator
-                  compressed: false
-                  Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
-                  table:
-                      input format: org.apache.hadoop.mapred.TextInputFormat
-                      output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
-                      serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
-                      name: default.union_subq_union
-          TableScan
-            Union
-              Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
-              Select Operator
-                expressions: UDFToInteger(_col0) (type: int), _col1 (type: string)
-                outputColumnNames: _col0, _col1
-                Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
-                File Output Operator
-                  compressed: false
-                  Statistics: Num rows: 1500 Data size: 15936 Basic stats: COMPLETE Column stats: NONE
-                  table:
-                      input format: org.apache.hadoop.mapred.TextInputFormat
-                      output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
-                      serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
-                      name: default.union_subq_union
 
   Stage: Stage-8
     Conditional Operator
@@ -295,8 +295,8 @@ select key, value from src
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@src
 POSTHOOK: Output: default@union_subq_union
-POSTHOOK: Lineage: union_subq_union.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), ]
-POSTHOOK: Lineage: union_subq_union.value EXPRESSION [(src)src.FieldSchema(name:value, type:string, comment:default), ]
+POSTHOOK: Lineage: union_subq_union.key EXPRESSION [(src)src.FieldSchema(name:key, type:string, comment:default), (src)src.FieldSchema(name:key, type:string, comment:default), (src)src.FieldSchema(name:key, type:string, comment:default), (src)src.FieldSchema(name:key, type:string, comment:default), ]
+POSTHOOK: Lineage: union_subq_union.value EXPRESSION [(src)src.FieldSchema(name:value, type:string, comment:default), (src)src.FieldSchema(name:value, type:string, comment:default), (src)src.FieldSchema(name:value, type:string, comment:default), (src)src.FieldSchema(name:value, type:string, comment:default), ]
 PREHOOK: query: select * from union_subq_union order by key, value limit 20
 PREHOOK: type: QUERY
 PREHOOK: Input: default@union_subq_union

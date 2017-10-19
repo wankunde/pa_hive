@@ -17,19 +17,23 @@
  */
 package org.apache.hadoop.hive.ql.exec.spark.session;
 
+import com.google.common.base.Preconditions;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.ql.exec.spark.HiveSparkClientFactory;
+import org.apache.hadoop.hive.ql.metadata.HiveException;
+import org.apache.hadoop.hive.shims.Utils;
+import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hive.spark.client.SparkClientFactory;
+
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.hive.conf.HiveConf;
-import org.apache.hadoop.hive.ql.exec.spark.HiveSparkClientFactory;
-import org.apache.hadoop.hive.ql.metadata.HiveException;
-import org.apache.hive.spark.client.SparkClientFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Simple implementation of <i>SparkSessionManager</i>
@@ -40,8 +44,8 @@ import org.apache.hive.spark.client.SparkClientFactory;
 public class SparkSessionManagerImpl implements SparkSessionManager {
   private static final Log LOG = LogFactory.getLog(SparkSessionManagerImpl.class);
 
-  private Set<SparkSession> createdSessions = Collections.synchronizedSet(new HashSet<SparkSession>());
-  private volatile boolean inited = false;
+  private Set<SparkSession> createdSessions;
+  private AtomicBoolean inited = new AtomicBoolean(false);
 
   private static SparkSessionManagerImpl instance;
 
@@ -74,18 +78,14 @@ public class SparkSessionManagerImpl implements SparkSessionManager {
 
   @Override
   public void setup(HiveConf hiveConf) throws HiveException {
-    if (!inited) {
-      synchronized (this) {
-        if (!inited) {
-          LOG.info("Setting up the session manager.");
-          Map<String, String> conf = HiveSparkClientFactory.initiateSparkConf(hiveConf);
-          try {
-            SparkClientFactory.initialize(conf);
-            inited = true;
-          } catch (IOException e) {
-            throw new HiveException("Error initializing SparkClientFactory", e);
-          }
-        }
+    if (inited.compareAndSet(false, true)) {
+      LOG.info("Setting up the session manager.");
+      createdSessions = Collections.synchronizedSet(new HashSet<SparkSession>());
+      Map<String, String> conf = HiveSparkClientFactory.initiateSparkConf(hiveConf);
+      try {
+        SparkClientFactory.initialize(conf);
+      } catch (IOException e) {
+        throw new HiveException("Error initializing SparkClientFactory", e);
       }
     }
   }
@@ -104,12 +104,14 @@ public class SparkSessionManagerImpl implements SparkSessionManager {
     if (existingSession != null) {
       // Open the session if it is closed.
       if (!existingSession.isOpen() && doOpen) {
-        existingSession.open(conf);
+	existingSession.open(conf);
       }
       return existingSession;
     }
 
     SparkSession sparkSession = new SparkSessionImpl();
+    createdSessions.add(sparkSession);
+
     if (doOpen) {
       sparkSession.open(conf);
     }
@@ -117,7 +119,6 @@ public class SparkSessionManagerImpl implements SparkSessionManager {
     if (LOG.isDebugEnabled()) {
       LOG.debug(String.format("New session (%s) is created.", sparkSession.getSessionId()));
     }
-    createdSessions.add(sparkSession);
     return sparkSession;
   }
 
@@ -143,15 +144,17 @@ public class SparkSessionManagerImpl implements SparkSessionManager {
   @Override
   public void shutdown() {
     LOG.info("Closing the session manager.");
-    synchronized (createdSessions) {
-      Iterator<SparkSession> it = createdSessions.iterator();
-      while (it.hasNext()) {
-        SparkSession session = it.next();
-        session.close();
+    if (createdSessions != null) {
+      synchronized (createdSessions) {
+        Iterator<SparkSession> it = createdSessions.iterator();
+        while (it.hasNext()) {
+          SparkSession session = it.next();
+          session.close();
+        }
+        createdSessions.clear();
       }
-      createdSessions.clear();
     }
-    inited = false;
+    inited.set(false);
     SparkClientFactory.stop();
   }
 }

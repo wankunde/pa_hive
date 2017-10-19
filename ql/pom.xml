@@ -19,7 +19,7 @@
   <parent>
     <groupId>org.apache.hive</groupId>
     <artifactId>hive</artifactId>
-    <version>1.1.0-cdh5.5.1</version>
+    <version>1.2.2</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
@@ -96,11 +96,6 @@
        <version>${commons-lang3.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.cloudera.logredactor</groupId>
-      <artifactId>logredactor</artifactId>
-      <version>${cdh.logredactor.version}</version>
-    </dependency>
-    <dependency>
       <groupId>commons-lang</groupId>
       <artifactId>commons-lang</artifactId>
       <version>${commons-lang.version}</version>
@@ -166,6 +161,11 @@
       <groupId>org.apache.thrift</groupId>
       <artifactId>libfb303</artifactId>
       <version>${libfb303.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.ivy</groupId>
+      <artifactId>ivy</artifactId>
+      <version>${ivy.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.thrift</groupId>
@@ -235,6 +235,14 @@
           <groupId>com.fasterxml.jackson.core</groupId>
           <artifactId>jackson-databind</artifactId>
         </exclusion>
+        <exclusion>
+          <groupId>com.fasterxml.jackson.core</groupId>
+          <artifactId>jackson-annotations</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>com.fasterxml.jackson.core</groupId>
+          <artifactId>jackson-core</artifactId>
+        </exclusion>
       </exclusions>
     </dependency>   
     <dependency>
@@ -253,6 +261,14 @@
           <groupId>com.fasterxml.jackson.core</groupId>
           <artifactId>jackson-databind</artifactId>
         </exclusion>
+        <exclusion>
+          <groupId>com.fasterxml.jackson.core</groupId>
+          <artifactId>jackson-annotations</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>com.fasterxml.jackson.core</groupId>
+          <artifactId>jackson-core</artifactId>
+        </exclusion>
       </exclusions>
     </dependency>
     <dependency>
@@ -269,11 +285,6 @@
       <groupId>com.googlecode.javaewah</groupId>
       <artifactId>JavaEWAH</artifactId>
       <version>${javaewah.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.google.code.gson</groupId>
-      <artifactId>gson</artifactId>
-      <version>${gson.version}</version>
     </dependency>
     <dependency>
       <groupId>org.iq80.snappy</groupId>
@@ -458,13 +469,6 @@
       <version>${spark.version}</version>
       <optional>true</optional>
     </dependency>
-    <!-- Following have only one version, which is cdh.hadoop.version -->
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-common</artifactId>
-      <version>${hadoop-23.version}</version>
-      <optional>true</optional>
-    </dependency>
   </dependencies>
 
   <profiles>
@@ -502,6 +506,12 @@
     <profile>
       <id>hadoop-2</id>
       <dependencies>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-common</artifactId>
+          <version>${hadoop-23.version}</version>
+          <optional>true</optional>
+        </dependency>
         <dependency>
           <groupId>org.apache.hadoop</groupId>
           <artifactId>hadoop-archives</artifactId>
@@ -700,6 +710,7 @@
                   <include>com.google.guava:guava</include>
                   <include>net.sf.opencsv:opencsv</include>
                   <include>org.apache.hive:spark-client</include>
+                  <include>joda-time:joda-time</include>
                 </includes>
               </artifactSet>
               <relocations>

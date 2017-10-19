@@ -1523,22 +1523,6 @@ module ThriftHiveMetastore
       raise ::Thrift::ApplicationException.new(::Thrift::ApplicationException::MISSING_RESULT, 'get_function failed: unknown result')
     end
 
-    def get_all_functions()
-      send_get_all_functions()
-      return recv_get_all_functions()
-    end
-
-    def send_get_all_functions()
-      send_message('get_all_functions', Get_all_functions_args)
-    end
-
-    def recv_get_all_functions()
-      result = receive_message(Get_all_functions_result)
-      return result.success unless result.success.nil?
-      raise result.o1 unless result.o1.nil?
-      raise ::Thrift::ApplicationException.new(::Thrift::ApplicationException::MISSING_RESULT, 'get_all_functions failed: unknown result')
-    end
-
     def create_role(role)
       send_create_role(role)
       return recv_create_role()
@@ -2029,6 +2013,22 @@ module ThriftHiveMetastore
       raise ::Thrift::ApplicationException.new(::Thrift::ApplicationException::MISSING_RESULT, 'show_compact failed: unknown result')
     end
 
+    def add_dynamic_partitions(rqst)
+      send_add_dynamic_partitions(rqst)
+      recv_add_dynamic_partitions()
+    end
+
+    def send_add_dynamic_partitions(rqst)
+      send_message('add_dynamic_partitions', Add_dynamic_partitions_args, :rqst => rqst)
+    end
+
+    def recv_add_dynamic_partitions()
+      result = receive_message(Add_dynamic_partitions_result)
+      raise result.o1 unless result.o1.nil?
+      raise result.o2 unless result.o2.nil?
+      return
+    end
+
     def get_next_notification(rqst)
       send_get_next_notification(rqst)
       return recv_get_next_notification()
@@ -2057,6 +2057,21 @@ module ThriftHiveMetastore
       result = receive_message(Get_current_notificationEventId_result)
       return result.success unless result.success.nil?
       raise ::Thrift::ApplicationException.new(::Thrift::ApplicationException::MISSING_RESULT, 'get_current_notificationEventId failed: unknown result')
+    end
+
+    def fire_listener_event(rqst)
+      send_fire_listener_event(rqst)
+      return recv_fire_listener_event()
+    end
+
+    def send_fire_listener_event(rqst)
+      send_message('fire_listener_event', Fire_listener_event_args, :rqst => rqst)
+    end
+
+    def recv_fire_listener_event()
+      result = receive_message(Fire_listener_event_result)
+      return result.success unless result.success.nil?
+      raise ::Thrift::ApplicationException.new(::Thrift::ApplicationException::MISSING_RESULT, 'fire_listener_event failed: unknown result')
     end
 
   end
@@ -3278,17 +3293,6 @@ module ThriftHiveMetastore
       write_result(result, oprot, 'get_function', seqid)
     end
 
-    def process_get_all_functions(seqid, iprot, oprot)
-      args = read_args(iprot, Get_all_functions_args)
-      result = Get_all_functions_result.new()
-      begin
-        result.success = @handler.get_all_functions()
-      rescue ::MetaException => o1
-        result.o1 = o1
-      end
-      write_result(result, oprot, 'get_all_functions', seqid)
-    end
-
     def process_create_role(seqid, iprot, oprot)
       args = read_args(iprot, Create_role_args)
       result = Create_role_result.new()
@@ -3616,6 +3620,19 @@ module ThriftHiveMetastore
       write_result(result, oprot, 'show_compact', seqid)
     end
 
+    def process_add_dynamic_partitions(seqid, iprot, oprot)
+      args = read_args(iprot, Add_dynamic_partitions_args)
+      result = Add_dynamic_partitions_result.new()
+      begin
+        @handler.add_dynamic_partitions(args.rqst)
+      rescue ::NoSuchTxnException => o1
+        result.o1 = o1
+      rescue ::TxnAbortedException => o2
+        result.o2 = o2
+      end
+      write_result(result, oprot, 'add_dynamic_partitions', seqid)
+    end
+
     def process_get_next_notification(seqid, iprot, oprot)
       args = read_args(iprot, Get_next_notification_args)
       result = Get_next_notification_result.new()
@@ -3628,6 +3645,13 @@ module ThriftHiveMetastore
       result = Get_current_notificationEventId_result.new()
       result.success = @handler.get_current_notificationEventId()
       write_result(result, oprot, 'get_current_notificationEventId', seqid)
+    end
+
+    def process_fire_listener_event(seqid, iprot, oprot)
+      args = read_args(iprot, Fire_listener_event_args)
+      result = Fire_listener_event_result.new()
+      result.success = @handler.fire_listener_event(args.rqst)
+      write_result(result, oprot, 'fire_listener_event', seqid)
     end
 
   end
@@ -7119,39 +7143,6 @@ module ThriftHiveMetastore
     ::Thrift::Struct.generate_accessors self
   end
 
-  class Get_all_functions_args
-    include ::Thrift::Struct, ::Thrift::Struct_Union
-
-    FIELDS = {
-
-    }
-
-    def struct_fields; FIELDS; end
-
-    def validate
-    end
-
-    ::Thrift::Struct.generate_accessors self
-  end
-
-  class Get_all_functions_result
-    include ::Thrift::Struct, ::Thrift::Struct_Union
-    SUCCESS = 0
-    O1 = 1
-
-    FIELDS = {
-      SUCCESS => {:type => ::Thrift::Types::STRUCT, :name => 'success', :class => ::GetAllFunctionsResponse},
-      O1 => {:type => ::Thrift::Types::STRUCT, :name => 'o1', :class => ::MetaException}
-    }
-
-    def struct_fields; FIELDS; end
-
-    def validate
-    end
-
-    ::Thrift::Struct.generate_accessors self
-  end
-
   class Create_role_args
     include ::Thrift::Struct, ::Thrift::Struct_Union
     ROLE = 1
@@ -8235,6 +8226,40 @@ module ThriftHiveMetastore
     ::Thrift::Struct.generate_accessors self
   end
 
+  class Add_dynamic_partitions_args
+    include ::Thrift::Struct, ::Thrift::Struct_Union
+    RQST = 1
+
+    FIELDS = {
+      RQST => {:type => ::Thrift::Types::STRUCT, :name => 'rqst', :class => ::AddDynamicPartitions}
+    }
+
+    def struct_fields; FIELDS; end
+
+    def validate
+    end
+
+    ::Thrift::Struct.generate_accessors self
+  end
+
+  class Add_dynamic_partitions_result
+    include ::Thrift::Struct, ::Thrift::Struct_Union
+    O1 = 1
+    O2 = 2
+
+    FIELDS = {
+      O1 => {:type => ::Thrift::Types::STRUCT, :name => 'o1', :class => ::NoSuchTxnException},
+      O2 => {:type => ::Thrift::Types::STRUCT, :name => 'o2', :class => ::TxnAbortedException}
+    }
+
+    def struct_fields; FIELDS; end
+
+    def validate
+    end
+
+    ::Thrift::Struct.generate_accessors self
+  end
+
   class Get_next_notification_args
     include ::Thrift::Struct, ::Thrift::Struct_Union
     RQST = 1
@@ -8288,6 +8313,38 @@ module ThriftHiveMetastore
 
     FIELDS = {
       SUCCESS => {:type => ::Thrift::Types::STRUCT, :name => 'success', :class => ::CurrentNotificationEventId}
+    }
+
+    def struct_fields; FIELDS; end
+
+    def validate
+    end
+
+    ::Thrift::Struct.generate_accessors self
+  end
+
+  class Fire_listener_event_args
+    include ::Thrift::Struct, ::Thrift::Struct_Union
+    RQST = 1
+
+    FIELDS = {
+      RQST => {:type => ::Thrift::Types::STRUCT, :name => 'rqst', :class => ::FireEventRequest}
+    }
+
+    def struct_fields; FIELDS; end
+
+    def validate
+    end
+
+    ::Thrift::Struct.generate_accessors self
+  end
+
+  class Fire_listener_event_result
+    include ::Thrift::Struct, ::Thrift::Struct_Union
+    SUCCESS = 0
+
+    FIELDS = {
+      SUCCESS => {:type => ::Thrift::Types::STRUCT, :name => 'success', :class => ::FireEventResponse}
     }
 
     def struct_fields; FIELDS; end

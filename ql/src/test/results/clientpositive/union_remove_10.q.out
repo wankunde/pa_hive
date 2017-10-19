@@ -34,11 +34,11 @@ create table inputTbl1(key string, val string) stored as textfile
 POSTHOOK: type: CREATETABLE
 POSTHOOK: Output: database:default
 POSTHOOK: Output: default@inputTbl1
-PREHOOK: query: create table outputTbl1(key string, values bigint) stored as rcfile
+PREHOOK: query: create table outputTbl1(key string, `values` bigint) stored as rcfile
 PREHOOK: type: CREATETABLE
 PREHOOK: Output: database:default
 PREHOOK: Output: default@outputTbl1
-POSTHOOK: query: create table outputTbl1(key string, values bigint) stored as rcfile
+POSTHOOK: query: create table outputTbl1(key string, `values` bigint) stored as rcfile
 POSTHOOK: type: CREATETABLE
 POSTHOOK: Output: database:default
 POSTHOOK: Output: default@outputTbl1
@@ -54,12 +54,12 @@ PREHOOK: query: explain
 insert overwrite table outputTbl1
 SELECT * FROM
 (
-select key, 1 as values from inputTbl1
+select key, 1 as `values` from inputTbl1
 union all
 select * FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, 2 as values from inputTbl1
+  SELECT key, 2 as `values` from inputTbl1
 ) a
 )b
 PREHOOK: type: QUERY
@@ -67,12 +67,12 @@ POSTHOOK: query: explain
 insert overwrite table outputTbl1
 SELECT * FROM
 (
-select key, 1 as values from inputTbl1
+select key, 1 as `values` from inputTbl1
 union all
 select * FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, 2 as values from inputTbl1
+  SELECT key, 2 as `values` from inputTbl1
 ) a
 )b
 POSTHOOK: type: QUERY
@@ -93,14 +93,14 @@ STAGE PLANS:
       Map Operator Tree:
           TableScan
             alias: inputtbl1
-            Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Select Operator
               expressions: key (type: string), 1 (type: bigint)
               outputColumnNames: _col0, _col1
-              Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+              Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               File Output Operator
                 compressed: false
-                Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+                Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                 table:
                     input format: org.apache.hadoop.hive.ql.io.RCFileInputFormat
                     output format: org.apache.hadoop.hive.ql.io.RCFileOutputFormat
@@ -151,22 +151,22 @@ STAGE PLANS:
       Map Operator Tree:
           TableScan
             alias: inputtbl1
-            Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Select Operator
               expressions: key (type: string)
               outputColumnNames: _col0
-              Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+              Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               Group By Operator
                 aggregations: count(1)
                 keys: _col0 (type: string)
                 mode: hash
                 outputColumnNames: _col0, _col1
-                Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                 Reduce Output Operator
                   key expressions: _col0 (type: string)
                   sort order: +
                   Map-reduce partition columns: _col0 (type: string)
-                  Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+                  Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                   value expressions: _col1 (type: bigint)
       Reduce Operator Tree:
         Group By Operator
@@ -174,10 +174,10 @@ STAGE PLANS:
           keys: KEY._col0 (type: string)
           mode: mergepartial
           outputColumnNames: _col0, _col1
-          Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+          Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
           File Output Operator
             compressed: false
-            Statistics: Num rows: 0 Data size: 0 Basic stats: NONE Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             table:
                 input format: org.apache.hadoop.hive.ql.io.RCFileInputFormat
                 output format: org.apache.hadoop.hive.ql.io.RCFileOutputFormat
@@ -189,14 +189,14 @@ STAGE PLANS:
       Map Operator Tree:
           TableScan
             alias: inputtbl1
-            Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+            Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Select Operator
               expressions: key (type: string), 2 (type: bigint)
               outputColumnNames: _col0, _col1
-              Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+              Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               File Output Operator
                 compressed: false
-                Statistics: Num rows: 0 Data size: 30 Basic stats: PARTIAL Column stats: NONE
+                Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
                 table:
                     input format: org.apache.hadoop.hive.ql.io.RCFileInputFormat
                     output format: org.apache.hadoop.hive.ql.io.RCFileOutputFormat
@@ -206,12 +206,12 @@ STAGE PLANS:
 PREHOOK: query: insert overwrite table outputTbl1
 SELECT * FROM
 (
-select key, 1 as values from inputTbl1
+select key, 1 as `values` from inputTbl1
 union all
 select * FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, 2 as values from inputTbl1
+  SELECT key, 2 as `values` from inputTbl1
 ) a
 )b
 PREHOOK: type: QUERY
@@ -220,18 +220,18 @@ PREHOOK: Output: default@outputtbl1
 POSTHOOK: query: insert overwrite table outputTbl1
 SELECT * FROM
 (
-select key, 1 as values from inputTbl1
+select key, 1 as `values` from inputTbl1
 union all
 select * FROM (
-  SELECT key, count(1) as values from inputTbl1 group by key
+  SELECT key, count(1) as `values` from inputTbl1 group by key
   UNION ALL
-  SELECT key, 2 as values from inputTbl1
+  SELECT key, 2 as `values` from inputTbl1
 ) a
 )b
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@inputtbl1
 POSTHOOK: Output: default@outputtbl1
-POSTHOOK: Lineage: outputtbl1.key EXPRESSION [(inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), ]
+POSTHOOK: Lineage: outputtbl1.key EXPRESSION [(inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), (inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), (inputtbl1)inputtbl1.FieldSchema(name:key, type:string, comment:null), ]
 POSTHOOK: Lineage: outputtbl1.values EXPRESSION [(inputtbl1)inputtbl1.null, ]
 PREHOOK: query: desc formatted outputTbl1
 PREHOOK: type: DESCTABLE
@@ -269,11 +269,11 @@ Bucket Columns:     	[]
 Sort Columns:       	[]                  	 
 Storage Desc Params:	 	 
 	serialization.format	1                   
-PREHOOK: query: select * from outputTbl1 order by key, values
+PREHOOK: query: select * from outputTbl1 order by key, `values`
 PREHOOK: type: QUERY
 PREHOOK: Input: default@outputtbl1
 #### A masked pattern was here ####
-POSTHOOK: query: select * from outputTbl1 order by key, values
+POSTHOOK: query: select * from outputTbl1 order by key, `values`
 POSTHOOK: type: QUERY
 POSTHOOK: Input: default@outputtbl1
 #### A masked pattern was here ####

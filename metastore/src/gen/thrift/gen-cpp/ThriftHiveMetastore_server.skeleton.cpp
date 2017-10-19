@@ -462,11 +462,6 @@ class ThriftHiveMetastoreHandler : virtual public ThriftHiveMetastoreIf {
     printf("get_function\n");
   }
 
-  void get_all_functions(GetAllFunctionsResponse& _return) {
-    // Your implementation goes here
-    printf("get_all_functions\n");
-  }
-
   bool create_role(const Role& role) {
     // Your implementation goes here
     printf("create_role\n");
@@ -622,6 +617,11 @@ class ThriftHiveMetastoreHandler : virtual public ThriftHiveMetastoreIf {
     printf("show_compact\n");
   }
 
+  void add_dynamic_partitions(const AddDynamicPartitions& rqst) {
+    // Your implementation goes here
+    printf("add_dynamic_partitions\n");
+  }
+
   void get_next_notification(NotificationEventResponse& _return, const NotificationEventRequest& rqst) {
     // Your implementation goes here
     printf("get_next_notification\n");
@@ -630,6 +630,11 @@ class ThriftHiveMetastoreHandler : virtual public ThriftHiveMetastoreIf {
   void get_current_notificationEventId(CurrentNotificationEventId& _return) {
     // Your implementation goes here
     printf("get_current_notificationEventId\n");
+  }
+
+  void fire_listener_event(FireEventResponse& _return, const FireEventRequest& rqst) {
+    // Your implementation goes here
+    printf("fire_listener_event\n");
   }
 
 };

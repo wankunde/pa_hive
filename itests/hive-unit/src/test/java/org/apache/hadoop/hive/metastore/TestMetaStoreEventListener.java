@@ -20,10 +20,13 @@ package org.apache.hadoop.hive.metastore;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import com.google.common.collect.Lists;
 import junit.framework.TestCase;
 
 import org.apache.hadoop.hive.cli.CliSessionState;
@@ -174,8 +177,12 @@ public class TestMetaStoreEventListener extends TestCase {
     assertEquals(expectedTableName, actualTableName);
   }
 
-  private void validateDropPartition(Partition expectedPartition, Partition actualPartition) {
-    validatePartition(expectedPartition, actualPartition);
+  private void validateDropPartition(Iterator<Partition> expectedPartitions, Iterator<Partition> actualPartitions) {
+    while (expectedPartitions.hasNext()){
+      assertTrue(actualPartitions.hasNext());
+      validatePartition(expectedPartitions.next(), actualPartitions.next());
+    }
+    assertFalse(actualPartitions.hasNext());
   }
 
   private void validateTableInDropPartition(Table expectedTable, Table actualTable) {
@@ -296,7 +303,8 @@ public class TestMetaStoreEventListener extends TestCase {
     AddPartitionEvent partEvent = (AddPartitionEvent)(notifyList.get(listSize-1));
     assert partEvent.getStatus();
     Partition part = msc.getPartition("hive2038", "tmptbl", "b=2011");
-    validateAddPartition(part, partEvent.getPartitions().get(0));
+    Partition partAdded = partEvent.getPartitionIterator().next();
+    validateAddPartition(part, partAdded);
     validateTableInAddPartition(tbl, partEvent.getTable());
     validateAddPartition(part, prePartEvent.getPartitions().get(0));
 
@@ -313,11 +321,12 @@ public class TestMetaStoreEventListener extends TestCase {
     hmsClient.add_partitions(Arrays.asList(partition1, partition2, partition3));
     ++listSize;
     AddPartitionEvent multiplePartitionEvent = (AddPartitionEvent)(notifyList.get(listSize-1));
-    assertEquals("Unexpected number of partitions in event!", 3, multiplePartitionEvent.getPartitions().size());
     assertEquals("Unexpected table value.", table, multiplePartitionEvent.getTable());
-    assertEquals("Unexpected partition value.", partition1.getValues(), multiplePartitionEvent.getPartitions().get(0).getValues());
-    assertEquals("Unexpected partition value.", partition2.getValues(), multiplePartitionEvent.getPartitions().get(1).getValues());
-    assertEquals("Unexpected partition value.", partition3.getValues(), multiplePartitionEvent.getPartitions().get(2).getValues());
+    List<Partition> multiParts = Lists.newArrayList(multiplePartitionEvent.getPartitionIterator());
+    assertEquals("Unexpected number of partitions in event!", 3, multiParts.size());
+    assertEquals("Unexpected partition value.", partition1.getValues(), multiParts.get(0).getValues());
+    assertEquals("Unexpected partition value.", partition2.getValues(), multiParts.get(1).getValues());
+    assertEquals("Unexpected partition value.", partition3.getValues(), multiParts.get(2).getValues());
 
     driver.run(String.format("alter table %s touch partition (%s)", tblName, "b='2011'"));
     listSize++;
@@ -352,7 +361,8 @@ public class TestMetaStoreEventListener extends TestCase {
 
     AddPartitionEvent appendPartEvent =
         (AddPartitionEvent)(notifyList.get(listSize-1));
-    validateAddPartition(newPart, appendPartEvent.getPartitions().get(0));
+    Partition partAppended = appendPartEvent.getPartitionIterator().next();
+    validateAddPartition(newPart, partAppended);
 
     PreAddPartitionEvent preAppendPartEvent =
         (PreAddPartitionEvent)(preNotifyList.get(preNotifyList.size() - 1));
@@ -413,10 +423,10 @@ public class TestMetaStoreEventListener extends TestCase {
 
     DropPartitionEvent dropPart = (DropPartitionEvent)notifyList.get(listSize - 1);
     assert dropPart.getStatus();
-    validateDropPartition(part, dropPart.getPartition());
+    validateDropPartition(Collections.singletonList(part).iterator(), dropPart.getPartitionIterator());
     validateTableInDropPartition(tbl, dropPart.getTable());
 
-    validateDropPartition(part, preDropPart.getPartition());
+    validateDropPartition(Collections.singletonList(part).iterator(), preDropPart.getPartitionIterator());
     validateTableInDropPartition(tbl, preDropPart.getTable());
 
     driver.run("drop table " + tblName);

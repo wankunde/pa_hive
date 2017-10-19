@@ -1,4 +1,3 @@
-set hive.exec.submitviachild=true;
 set hive.map.aggr.hash.percentmemory = 0.3;
 set hive.mapred.local.mem = 256;
 

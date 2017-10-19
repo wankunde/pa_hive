@@ -1,4 +1,3 @@
-set hive.exec.submitviachild=true;
 add file ../../data/scripts/newline.py;
 set hive.transform.escape.input=true;
 

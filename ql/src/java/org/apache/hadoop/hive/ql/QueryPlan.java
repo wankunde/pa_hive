@@ -37,7 +37,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.hive.metastore.api.Schema;
 import org.apache.hadoop.hive.ql.exec.ConditionalTask;
 import org.apache.hadoop.hive.ql.exec.ExplainTask;
 import org.apache.hadoop.hive.ql.exec.FetchTask;
@@ -90,7 +89,6 @@ public class QueryPlan implements Serializable {
   protected LineageInfo linfo;
   private TableAccessInfo tableAccessInfo;
   private ColumnAccessInfo columnAccessInfo;
-  private Schema resultSchema;
 
   private HashMap<String, String> idToTableNameMap;
 
@@ -113,7 +111,7 @@ public class QueryPlan implements Serializable {
   }
 
   public QueryPlan(String queryString, BaseSemanticAnalyzer sem, Long startTime, String queryId,
-      String operationName, Schema resultSchema) {
+      String operationName) {
     this.queryString = queryString;
 
     rootTasks = new ArrayList<Task<? extends Serializable>>();
@@ -135,7 +133,6 @@ public class QueryPlan implements Serializable {
     queryProperties = sem.getQueryProperties();
     queryStartTime = startTime;
     this.operationName = operationName;
-    this.resultSchema = resultSchema;
   }
 
   public String getQueryStr() {
@@ -152,7 +149,7 @@ public class QueryPlan implements Serializable {
 
     return userid
         + "_"
-        + String.format("%1$4d%2$02d%3$02d%4$02d%5$02d%5$02d", gc
+        + String.format("%1$4d%2$02d%3$02d%4$02d%5$02d%6$02d", gc
         .get(Calendar.YEAR), gc.get(Calendar.MONTH) + 1, gc
         .get(Calendar.DAY_OF_MONTH), gc.get(Calendar.HOUR_OF_DAY), gc
         .get(Calendar.MINUTE), gc.get(Calendar.SECOND))
@@ -438,7 +435,7 @@ public class QueryPlan implements Serializable {
     return "\"" + key + "\":" + getJSONValue(value) + ",";
   }
 
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("rawtypes")
   private String getJSONList(List list) {
     if (list == null) {
       return "null";
@@ -454,7 +451,7 @@ public class QueryPlan implements Serializable {
     return sb.toString();
   }
 
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("rawtypes")
   public String getJSONMap(Map map) {
     if (map == null) {
       return "null";
@@ -684,10 +681,6 @@ public class QueryPlan implements Serializable {
 
   public void setOutputs(HashSet<WriteEntity> outputs) {
     this.outputs = outputs;
-  }
-
-  public Schema getResultSchema() {
-    return resultSchema;
   }
 
   public HashMap<String, String> getIdToTableNameMap() {

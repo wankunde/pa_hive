@@ -1,3 +1,4 @@
+set hive.join.emit.interval=2;
 explain
 select * from src a join src1 b on a.key = b.key;
 
@@ -41,6 +42,8 @@ select count(*)
 from tab a join tab_part b on a.key = b.key;
 
 set hive.auto.convert.join.noconditionaltask.size=2000;
+set hive.mapjoin.hybridgrace.minwbsize=500;
+set hive.mapjoin.hybridgrace.minnumpartitions=4;
 explain
 select count (*)
 from tab a join tab_part b on a.key = b.key;
@@ -49,6 +52,8 @@ select count(*)
 from tab a join tab_part b on a.key = b.key;
 
 set hive.auto.convert.join.noconditionaltask.size=1000;
+set hive.mapjoin.hybridgrace.minwbsize=250;
+set hive.mapjoin.hybridgrace.minnumpartitions=4;
 explain
 select count (*)
 from tab a join tab_part b on a.key = b.key;
@@ -57,6 +62,8 @@ select count(*)
 from tab a join tab_part b on a.key = b.key;
 
 set hive.auto.convert.join.noconditionaltask.size=500;
+set hive.mapjoin.hybridgrace.minwbsize=125;
+set hive.mapjoin.hybridgrace.minnumpartitions=4;
 explain select count(*) from tab a join tab_part b on a.key = b.key join src1 c on a.value = c.value;
 select count(*) from tab a join tab_part b on a.key = b.key join src1 c on a.value = c.value;
 
@@ -81,4 +88,21 @@ select count(*) from (select s1.key as key, s1.value as value from tab s1 join t
 UNION  ALL
 select s2.key as key, s2.value as value from tab s2
 ) a join tab_part b on (a.key = b.key);
+
+explain
+select count(*) from
+(select rt1.id from
+(select t1.key as id, t1.value as od from tab t1 order by id, od) rt1) vt1
+join
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+where vt1.id=vt2.id;
+
+select count(*) from
+(select rt1.id from
+(select t1.key as id, t1.value as od from tab t1 order by id, od) rt1) vt1
+join
+(select rt2.id from
+(select t2.key as id, t2.value as od from tab_part t2 order by id, od) rt2) vt2
+where vt1.id=vt2.id;
 

@@ -106,6 +106,15 @@ enum GrantRevokeType {
     REVOKE = 2,
 }
 
+// Types of events the client can request that the metastore fire.  For now just support DML operations, as the metastore knows
+// about DDL operations and there's no reason for the client to request such an event.
+enum EventRequestType {
+    INSERT = 1,
+    UPDATE = 2,
+    DELETE = 3,
+}
+
+
 struct HiveObjectRef{
   1: HiveObjectType objectType,
   2: string dbName,
@@ -359,13 +368,25 @@ struct DecimalColumnStatsData {
 4: required i64 numDVs
 }
 
+struct Date {
+1: required i64 daysSinceEpoch
+}
+
+struct DateColumnStatsData {
+1: optional Date lowValue,
+2: optional Date highValue,
+3: required i64 numNulls,
+4: required i64 numDVs
+}
+
 union ColumnStatisticsData {
 1: BooleanColumnStatsData booleanStats,
 2: LongColumnStatsData longStats,
 3: DoubleColumnStatsData doubleStats,
 4: StringColumnStatsData stringStats,
 5: BinaryColumnStatsData binaryStats,
-6: DecimalColumnStatsData decimalStats
+6: DecimalColumnStatsData decimalStats,
+7: DateColumnStatsData dateStats
 }
 
 struct ColumnStatisticsObj {
@@ -642,6 +663,13 @@ struct ShowCompactResponse {
     1: required list<ShowCompactResponseElement> compacts,
 }
 
+struct AddDynamicPartitions {
+    1: required i64 txnid,
+    2: required string dbname,
+    3: required string tablename,
+    4: required list<string> partitionnames,
+}
+
 struct NotificationEventRequest {
     1: required i64 lastEvent,
     2: optional i32 maxEvents,
@@ -687,9 +715,6 @@ struct FireEventResponse {
 }
     
 
-struct GetAllFunctionsResponse {
-  1: optional list<Function> functions
-}
 
 exception MetaException {
   1: string message
@@ -1089,8 +1114,6 @@ service ThriftHiveMetastore extends fb303.FacebookService
   Function get_function(1:string dbName, 2:string funcName)
       throws (1:MetaException o1, 2:NoSuchObjectException o2)
 
-  GetAllFunctionsResponse get_all_functions() throws (1:MetaException o1)
-
   //authorization privileges
 
   bool create_role(1:Role role) throws(1:MetaException o1)
@@ -1160,10 +1183,12 @@ service ThriftHiveMetastore extends fb303.FacebookService
   HeartbeatTxnRangeResponse heartbeat_txn_range(1:HeartbeatTxnRangeRequest txns)
   void compact(1:CompactionRequest rqst) 
   ShowCompactResponse show_compact(1:ShowCompactRequest rqst)
+  void add_dynamic_partitions(1:AddDynamicPartitions rqst) throws (1:NoSuchTxnException o1, 2:TxnAbortedException o2)
 
   // Notification logging calls
   NotificationEventResponse get_next_notification(1:NotificationEventRequest rqst) 
   CurrentNotificationEventId get_current_notificationEventId()
+  FireEventResponse fire_listener_event(1:FireEventRequest rqst)
 }
 
 // * Note about the DDL_TIME: When creating or altering a table or a partition,

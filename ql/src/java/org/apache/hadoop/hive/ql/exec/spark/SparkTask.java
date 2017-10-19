@@ -28,6 +28,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.Warehouse;
@@ -49,7 +51,6 @@ import org.apache.hadoop.hive.ql.exec.spark.Statistic.SparkStatistics;
 import org.apache.hadoop.hive.ql.exec.spark.session.SparkSession;
 import org.apache.hadoop.hive.ql.exec.spark.session.SparkSessionManager;
 import org.apache.hadoop.hive.ql.exec.spark.session.SparkSessionManagerImpl;
-import org.apache.hadoop.hive.ql.exec.spark.status.LocalSparkJobMonitor;
 import org.apache.hadoop.hive.ql.exec.spark.status.SparkJobRef;
 import org.apache.hadoop.hive.ql.exec.spark.status.SparkJobStatus;
 import org.apache.hadoop.hive.ql.history.HiveHistory.Keys;
@@ -57,7 +58,7 @@ import org.apache.hadoop.hive.ql.log.PerfLogger;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.metadata.Partition;
 import org.apache.hadoop.hive.ql.metadata.Table;
-import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer;
+import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer.TableSpec;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
 import org.apache.hadoop.hive.ql.plan.DynamicPartitionCtx;
 import org.apache.hadoop.hive.ql.plan.LoadTableDesc;
@@ -68,6 +69,7 @@ import org.apache.hadoop.hive.ql.plan.SparkWork;
 import org.apache.hadoop.hive.ql.plan.StatsWork;
 import org.apache.hadoop.hive.ql.plan.api.StageType;
 import org.apache.hadoop.hive.ql.session.SessionState;
+import org.apache.hadoop.hive.ql.session.SessionState.LogHelper;
 import org.apache.hadoop.hive.ql.stats.StatsFactory;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hive.spark.counter.SparkCounters;
@@ -76,7 +78,9 @@ import com.google.common.collect.Lists;
 
 public class SparkTask extends Task<SparkWork> {
   private static final String CLASS_NAME = SparkTask.class.getName();
-  private final PerfLogger perfLogger = SessionState.getPerfLogger();
+  private static final Log LOG = LogFactory.getLog(CLASS_NAME);
+  private static final LogHelper console = new LogHelper(LOG);
+  private final PerfLogger perfLogger = PerfLogger.getPerfLogger();
   private static final long serialVersionUID = 1L;
   private SparkCounters sparkCounters;
 
@@ -114,7 +118,6 @@ public class SparkTask extends Task<SparkWork> {
           LOG.info(String.format("=====Spark Job[%s] statistics=====", jobRef.getJobId()));
           logSparkStatistic(sparkStatistics);
         }
-        LOG.info("Execution completed successfully");
       } else if (rc == 2) { // Cancel job if the monitor found job submission timeout.
         jobRef.cancelJob();
       }
@@ -332,7 +335,7 @@ public class SparkTask extends Task<SparkWork> {
     if (work.getTableSpecs() != null) {
 
       // ANALYZE command
-      BaseSemanticAnalyzer.tableSpec tblSpec = work.getTableSpecs();
+      TableSpec tblSpec = work.getTableSpecs();
       table = tblSpec.tableHandle;
       if (!table.isPartitioned()) {
         return null;

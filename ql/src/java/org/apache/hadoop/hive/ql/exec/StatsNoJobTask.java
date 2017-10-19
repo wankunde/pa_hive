@@ -19,6 +19,7 @@
 package org.apache.hadoop.hive.ql.exec;
 
 import java.io.Serializable;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
@@ -42,7 +43,7 @@ import org.apache.hadoop.hive.ql.io.StatsProvidingRecordReader;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.metadata.Partition;
 import org.apache.hadoop.hive.ql.metadata.Table;
-import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer.tableSpec;
+import org.apache.hadoop.hive.ql.parse.BaseSemanticAnalyzer.TableSpec;
 import org.apache.hadoop.hive.ql.plan.StatsNoJobWork;
 import org.apache.hadoop.hive.ql.plan.api.StageType;
 import org.apache.hadoop.hive.shims.ShimLoader;
@@ -51,8 +52,8 @@ import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.InputSplit;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.Reporter;
-import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
+import org.apache.hive.common.util.ReflectionUtil;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.MapMaker;
@@ -149,7 +150,7 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
         boolean statsAvailable = false;
         for(FileStatus file: fileList) {
           if (!file.isDir()) {
-            InputFormat<?, ?> inputFormat = (InputFormat<?, ?>) ReflectionUtils.newInstance(
+            InputFormat<?, ?> inputFormat = (InputFormat<?, ?>) ReflectionUtil.newInstance(
                 partn.getInputFormatClass(), jc);
             InputSplit dummySplit = new FileSplit(file.getPath(), 0, 0,
                 new String[] { partn.getLocation() });
@@ -223,7 +224,12 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
     int ret = 0;
 
     try {
-      List<Partition> partitions = getPartitionsList();
+      Collection<Partition> partitions = null;
+      if (work.getPrunedPartitionList() == null) {
+        partitions = getPartitionsList();
+      } else {
+        partitions = work.getPrunedPartitionList().getPartitions();
+      }
 
       // non-partitioned table
       if (partitions == null) {
@@ -242,7 +248,7 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
           boolean statsAvailable = false;
           for(FileStatus file: fileList) {
             if (!file.isDir()) {
-              InputFormat<?, ?> inputFormat = (InputFormat<?, ?>) ReflectionUtils.newInstance(
+              InputFormat<?, ?> inputFormat = (InputFormat<?, ?>) ReflectionUtil.newInstance(
                   table.getInputFormatClass(), jc);
               InputSplit dummySplit = new FileSplit(file.getPath(), 0, 0, new String[] { table
                   .getDataLocation().toString() });
@@ -371,7 +377,7 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
 
   private List<Partition> getPartitionsList() throws HiveException {
     if (work.getTableSpecs() != null) {
-      tableSpec tblSpec = work.getTableSpecs();
+      TableSpec tblSpec = work.getTableSpecs();
       table = tblSpec.tableHandle;
       if (!table.isPartitioned()) {
         return null;

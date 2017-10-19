@@ -19,7 +19,7 @@
   <parent>
     <groupId>org.apache.hive</groupId>
     <artifactId>hive-it</artifactId>
-    <version>1.1.0-cdh5.5.1</version>
+    <version>1.2.1</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
@@ -111,12 +111,6 @@
     </dependency>
     <!-- test inter-project -->
     <dependency>
-      <groupId>org.apache.spark</groupId>
-      <artifactId>spark-core_${scala.binary.version}</artifactId>
-      <version>${spark.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
       <version>${junit.version}</version>
@@ -132,22 +126,58 @@
 
   <profiles>
     <profile>
-      <id>hadoop-1</id>
+      <id>spark-test</id>
       <activation>
-        <activeByDefault>false</activeByDefault>
+        <property>
+          <name>!skipSparkTests</name>
+        </property>
       </activation>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.spark</groupId>
+          <artifactId>spark-core_${scala.binary.version}</artifactId>
+          <version>${spark.version}</version>
+          <scope>test</scope>
+          <exclusions>
+            <exclusion>
+              <groupId>com.esotericsoftware.kryo</groupId>
+              <artifactId>kryo</artifactId>
+            </exclusion>
+          </exclusions>
+        </dependency>
+      </dependencies>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>download-spark</id>
+                <phase>generate-sources</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target>
+                    <exec executable="bash" dir="${basedir}" failonerror="true">
+                      <arg line="../target/download.sh"/>
+                    </exec>
+                  </target>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>hadoop-1</id>
       <dependencies>
         <dependency>
           <groupId>org.apache.hadoop</groupId>
           <artifactId>hadoop-core</artifactId>
           <version>${hadoop-20S.version}</version>
-        </dependency>
-         <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-common</artifactId>
-          <version>${hadoop-23.version}</version>
-          <classifier>tests</classifier>
-          <scope>test</scope>
         </dependency>
         <dependency>
           <groupId>org.apache.hadoop</groupId>
@@ -183,13 +213,13 @@
         </dependency>
         <dependency>
           <groupId>org.apache.hbase</groupId>
-          <artifactId>hbase-hadoop2-compat</artifactId>
+          <artifactId>hbase-hadoop1-compat</artifactId>
           <version>${hbase.hadoop1.version}</version>
           <scope>test</scope>
         </dependency>
         <dependency>
           <groupId>org.apache.hbase</groupId>
-          <artifactId>hbase-hadoop2-compat</artifactId>
+          <artifactId>hbase-hadoop1-compat</artifactId>
           <version>${hbase.hadoop1.version}</version>
           <scope>test</scope>
           <classifier>tests</classifier>
@@ -216,12 +246,6 @@
         <dependency>
           <groupId>com.sun.jersey</groupId>
           <artifactId>jersey-servlet</artifactId>
-          <scope>test</scope>
-        </dependency>
-        <dependency>
-          <groupId>org.apache.hbase</groupId>
-          <artifactId>hbase-server</artifactId>
-          <version>${hbase.hadoop1.version}</version>
           <scope>test</scope>
         </dependency>
       </dependencies>
@@ -257,7 +281,7 @@
         <dependency>
           <groupId>org.apache.hbase</groupId>
           <artifactId>hbase-server</artifactId>
-          <version>${hbase.hadoop1.version}</version>
+          <version>${hbase.hadoop2.version}</version>
           <scope>test</scope>
         </dependency>
         <dependency>
@@ -270,6 +294,73 @@
           <artifactId>jersey-servlet</artifactId>
           <scope>test</scope>
         </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-archives</artifactId>
+          <version>${hadoop-23.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-common</artifactId>
+          <version>${hadoop-23.version}</version>
+          <classifier>tests</classifier>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-mapreduce-client-hs</artifactId>
+          <version>${hadoop-23.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>commons-logging</groupId>
+          <artifactId>commons-logging</artifactId>
+          <version>${commons-logging.version}</version>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-server-tests</artifactId>
+          <version>${hadoop-23.version}</version>
+          <scope>test</scope>
+          <classifier>tests</classifier>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-client</artifactId>
+          <version>${hadoop-23.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.tez</groupId>
+          <artifactId>tez-tests</artifactId>
+          <version>${tez.version}</version>
+          <type>test-jar</type>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.tez</groupId>
+          <artifactId>tez-api</artifactId>
+          <version>${tez.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.tez</groupId>
+          <artifactId>tez-runtime-library</artifactId>
+          <version>${tez.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.tez</groupId>
+          <artifactId>tez-mapreduce</artifactId>
+          <version>${tez.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.tez</groupId>
+          <artifactId>tez-dag</artifactId>
+          <version>${tez.version}</version>
+          <scope>test</scope>
+        </dependency>
       </dependencies>
     </profile>
   </profiles>
@@ -278,53 +369,8 @@
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-dependency-plugin</artifactId>
-        <version>2.10</version>
-        <executions>
-          <execution>
-            <phase>test-compile</phase>
-            <goals>
-              <goal>build-classpath</goal>
-            </goals>
-            <configuration>
-              <includeScope>test</includeScope>
-              <outputProperty>test_classpath</outputProperty>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <version>2.18</version>
-        <configuration>
-          <environmentVariables>
-            <!--
-              Setting SPARK_DIST_CLASSPATH is a simple way to make sure any child processes
-              launched by the tests have access to the correct test-time classpath.
-            -->
-            <SPARK_DIST_CLASSPATH>${test_classpath}</SPARK_DIST_CLASSPATH>
-          </environmentVariables>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-antrun-plugin</artifactId>
         <executions>
-          <execution>
-            <id>download-spark</id>
-            <phase>generate-sources</phase>
-            <goals>
-              <goal>run</goal>
-            </goals>
-            <configuration>
-              <target>
-                <exec executable="bash" dir="${basedir}" failonerror="true">
-                  <arg line="../target/download.sh"/>
-                </exec>
-              </target>
-            </configuration>
-          </execution>
           <execution>
             <id>setup-metastore-scripts</id>
             <phase>process-test-resources</phase>

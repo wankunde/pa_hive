@@ -19,13 +19,14 @@ package org.apache.hadoop.hive.shims;
 
 import java.io.IOException;
 import java.lang.Override;
+import java.lang.reflect.Constructor;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -66,12 +67,10 @@ import org.apache.hadoop.mapreduce.OutputFormat;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.TaskID;
+import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.KerberosName;
+import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.tools.distcp2.DistCp;
-import org.apache.hadoop.tools.distcp2.DistCpOptions;
-import org.apache.hadoop.tools.distcp2.DistCpOptions.FileAttribute;
-
 import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.VersionInfo;
@@ -157,6 +156,11 @@ public class Hadoop20SShims extends HadoopShimsSecure {
   @Override
   public org.apache.hadoop.mapreduce.JobContext newJobContext(Job job) {
     return new org.apache.hadoop.mapreduce.JobContext(job.getConfiguration(), job.getJobID());
+  }
+
+  @Override
+  public void startPauseMonitor(Configuration conf) {
+    /* no supported */
   }
 
   @Override
@@ -504,7 +508,7 @@ public class Hadoop20SShims extends HadoopShimsSecure {
   }
 
   public class Hadoop20SFileStatus implements HdfsFileStatus {
-    private final FileStatus fileStatus;
+    private FileStatus fileStatus;
     public Hadoop20SFileStatus(FileStatus fileStatus) {
       this.fileStatus = fileStatus;
     }
@@ -630,52 +634,61 @@ public class Hadoop20SShims extends HadoopShimsSecure {
    */
   public class KerberosNameShim implements HadoopShimsSecure.KerberosNameShim {
 
-    private final KerberosName kerberosName;
+    private KerberosName kerberosName;
 
     public KerberosNameShim(String name) {
       kerberosName = new KerberosName(name);
     }
 
-    @Override
     public String getDefaultRealm() {
       return kerberosName.getDefaultRealm();
     }
 
-    @Override
     public String getServiceName() {
       return kerberosName.getServiceName();
     }
 
-    @Override
     public String getHostName() {
       return kerberosName.getHostName();
     }
 
-    @Override
     public String getRealm() {
       return kerberosName.getRealm();
     }
 
-    @Override
     public String getShortName() throws IOException {
       return kerberosName.getShortName();
     }
   }
 
   @Override
-  public boolean runDistCp(Path src, Path dst, Configuration conf) throws IOException {
+  public StoragePolicyShim getStoragePolicyShim(FileSystem fs) {
+    return null;
+  }
 
-    DistCpOptions options = new DistCpOptions(Collections.singletonList(src), dst);
-    options.setSyncFolder(true);
-    options.setSkipCRC(true);
-    options.preserve(FileAttribute.BLOCKSIZE);
+  @Override
+  public boolean runDistCp(Path src, Path dst, Configuration conf) throws IOException {
+    int rc;
+
+    // Creates the command-line parameters for distcp
+    String[] params = {"-update", "-skipcrccheck", src.toString(), dst.toString()};
+
     try {
-      DistCp distcp = new DistCp(conf, options);
-      distcp.execute();
-      return true;
+      Class clazzDistCp = Class.forName("org.apache.hadoop.tools.distcp2");
+      Constructor c = clazzDistCp.getConstructor();
+      c.setAccessible(true);
+      Tool distcp = (Tool)c.newInstance();
+      distcp.setConf(conf);
+      rc = distcp.run(params);
+    } catch (ClassNotFoundException e) {
+      throw new IOException("Cannot find DistCp class package: " + e.getMessage());
+    } catch (NoSuchMethodException e) {
+      throw new IOException("Cannot get DistCp constructor: " + e.getMessage());
     } catch (Exception e) {
       throw new IOException("Cannot execute DistCp process: " + e, e);
     }
+
+    return (0 == rc) ? true : false;
   }
 
   @Override
@@ -686,5 +699,32 @@ public class Hadoop20SShims extends HadoopShimsSecure {
   @Override
   public Path getPathWithoutSchemeAndAuthority(Path path) {
     return path;
+  }
+
+  @Override
+  public int readByteBuffer(FSDataInputStream file, ByteBuffer dest) throws IOException {
+    // Inefficient for direct buffers; only here for compat.
+    int pos = dest.position();
+    if (dest.hasArray()) {
+      int result = file.read(dest.array(), dest.arrayOffset(), dest.remaining());
+      if (result > 0) {
+        dest.position(pos + result);
+      }
+      return result;
+    } else {
+      byte[] arr = new byte[dest.remaining()];
+      int result = file.read(arr, 0, arr.length);
+      if (result > 0) {
+        dest.put(arr, 0, result);
+        dest.position(pos + result);
+      }
+      return result;
+    }
+  }
+
+  @Override
+  public void addDelegationTokens(FileSystem fs, Credentials cred, String uname) throws IOException {
+    Token<?> fsToken = fs.getDelegationToken(uname);
+    cred.addToken(fsToken.getService(), fsToken);
   }
 }

@@ -102,7 +102,7 @@ public class MoveTask extends Task<MoveWork> implements Serializable {
         if (HiveConf.getBoolVar(conf, HiveConf.ConfVars.HIVE_INSERT_INTO_MULTILEVEL_DIRS)) {
           deletePath = createTargetPath(targetPath, fs);
         }
-        if (!Hive.moveFile(conf, sourcePath, targetPath, true, false)) {
+        if (!Hive.moveFile(conf, sourcePath, targetPath, fs, true, false)) {
           try {
             if (deletePath != null) {
               fs.delete(deletePath, true);
@@ -127,25 +127,10 @@ public class MoveTask extends Task<MoveWork> implements Serializable {
       LocalFileSystem dstFs = FileSystem.getLocal(conf);
 
       if (dstFs.delete(targetPath, true) || !dstFs.exists(targetPath)) {
+        console.printInfo(mesg, mesg_detail);
         // if source exists, rename. Otherwise, create a empty directory
         if (fs.exists(sourcePath)) {
-          try {
-            // create the destination if it does not exist
-            if (!dstFs.exists(targetPath)) {
-              if (!FileUtils.mkdir(dstFs, targetPath, false, conf)) {
-                throw new HiveException(
-                    "Failed to create local target directory for copy:" + targetPath);
-              }
-            }
-          } catch (IOException e) {
-            throw new HiveException("Unable to create target directory for copy" + targetPath, e);
-          }
-
-          FileSystem srcFs = sourcePath.getFileSystem(conf);
-          FileStatus[] srcs = srcFs.listStatus(sourcePath, FileUtils.HIDDEN_FILES_PATH_FILTER);
-          for (FileStatus status : srcs) {
-            fs.copyToLocalFile(status.getPath(), targetPath);
-          }
+          fs.copyToLocalFile(sourcePath, targetPath);
         } else {
           if (!dstFs.mkdirs(targetPath)) {
             throw new HiveException("Unable to make local directory: "
@@ -394,7 +379,8 @@ public class MoveTask extends Task<MoveWork> implements Serializable {
                 dpCtx.getNumDPCols(),
                 tbd.getHoldDDLTime(),
                 isSkewedStoredAsDirs(tbd),
-                work.getLoadTableWork().getWriteType() != AcidUtils.Operation.NOT_ACID);
+                work.getLoadTableWork().getWriteType() != AcidUtils.Operation.NOT_ACID,
+                SessionState.get().getCurrentTxn());
             console.printInfo("\t Time taken for load dynamic partitions : "  +
                 (System.currentTimeMillis() - startTime));
 

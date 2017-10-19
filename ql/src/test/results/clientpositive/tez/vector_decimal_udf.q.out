@@ -820,7 +820,7 @@ STAGE PLANS:
                   alias: decimal_udf
                   Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                   Filter Operator
-                    predicate: ((key * CAST( value AS decimal(10,0))) > CAST( 0 AS decimal(31,10))) (type: boolean)
+                    predicate: ((key * CAST( value AS decimal(10,0))) > 0) (type: boolean)
                     Statistics: Num rows: 12 Data size: 1356 Basic stats: COMPLETE Column stats: NONE
                     Select Operator
                       expressions: key (type: decimal(20,10)), value (type: int)
@@ -1142,7 +1142,7 @@ STAGE PLANS:
                   alias: decimal_udf
                   Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
-                    expressions: (key / CAST( 0 AS decimal(10,0))) (type: decimal(22,12))
+                    expressions: (key / 0) (type: decimal(22,12))
                     outputColumnNames: _col0
                     Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                     Limit
@@ -1191,7 +1191,7 @@ STAGE PLANS:
                   alias: decimal_udf
                   Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
-                    expressions: (UDFToDouble(key) / UDFToDouble(null)) (type: double)
+                    expressions: (UDFToDouble(key) / null) (type: double)
                     outputColumnNames: _col0
                     Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                     Limit
@@ -1204,7 +1204,6 @@ STAGE PLANS:
                             input format: org.apache.hadoop.mapred.TextInputFormat
                             output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
                             serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
-            Execution mode: vectorized
 
   Stage: Stage-0
     Fetch Operator
@@ -1240,15 +1239,15 @@ STAGE PLANS:
                   alias: decimal_udf
                   Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                   Filter Operator
-                    predicate: (key <> CAST( 0 AS decimal(20,10))) (type: boolean)
-                    Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                    predicate: (key is not null and (key <> 0)) (type: boolean)
+                    Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                     Select Operator
                       expressions: (key / key) (type: decimal(38,24))
                       outputColumnNames: _col0
-                      Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                      Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                       File Output Operator
                         compressed: false
-                        Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                        Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                         table:
                             input format: org.apache.hadoop.mapred.TextInputFormat
                             output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -1322,15 +1321,15 @@ STAGE PLANS:
                   alias: decimal_udf
                   Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                   Filter Operator
-                    predicate: (value <> 0) (type: boolean)
-                    Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                    predicate: (value is not null and (value <> 0)) (type: boolean)
+                    Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                     Select Operator
                       expressions: (key / CAST( value AS decimal(10,0))) (type: decimal(31,21))
                       outputColumnNames: _col0
-                      Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                      Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                       File Output Operator
                         compressed: false
-                        Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                        Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                         table:
                             input format: org.apache.hadoop.mapred.TextInputFormat
                             output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -1394,15 +1393,15 @@ STAGE PLANS:
                   alias: decimal_udf
                   Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                   Filter Operator
-                    predicate: (value <> 0) (type: boolean)
-                    Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                    predicate: (value is not null and (value <> 0)) (type: boolean)
+                    Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                     Select Operator
                       expressions: (UDFToDouble(key) / (UDFToDouble(value) / 2.0)) (type: double)
                       outputColumnNames: _col0
-                      Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                      Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                       File Output Operator
                         compressed: false
-                        Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
+                        Statistics: Num rows: 19 Data size: 2148 Basic stats: COMPLETE Column stats: NONE
                         table:
                             input format: org.apache.hadoop.mapred.TextInputFormat
                             output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
@@ -2230,7 +2229,7 @@ STAGE PLANS:
                   alias: decimal_udf
                   Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                   Select Operator
-                    expressions: ((key + CAST( 1 AS decimal(10,0))) % (key / CAST( 2 AS decimal(10,0)))) (type: decimal(22,12))
+                    expressions: ((key + 1) % (key / 2)) (type: decimal(22,12))
                     outputColumnNames: _col0
                     Statistics: Num rows: 38 Data size: 4296 Basic stats: COMPLETE Column stats: NONE
                     File Output Operator

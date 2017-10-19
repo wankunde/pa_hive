@@ -29,6 +29,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.exec.HashTableSinkOperator;
 import org.apache.hadoop.hive.ql.exec.MapJoinOperator;
+import org.apache.hadoop.hive.ql.exec.MapredContext;
 import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.exec.TemporaryHashSinkOperator;
 import org.apache.hadoop.hive.ql.exec.Utilities;
@@ -58,7 +59,8 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
   private MapJoinDesc desc;
 
   @Override
-  public void init(ExecMapperContext context, Configuration hconf, MapJoinOperator joinOp) {
+  public void init(ExecMapperContext context, MapredContext mrContext, Configuration hconf,
+      MapJoinOperator joinOp) {
     this.context = context;
     this.hconf = hconf;
     this.joinOp = joinOp;
@@ -66,9 +68,9 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
   }
 
   @Override
-  public void load(
-      MapJoinTableContainer[] mapJoinTables,
-      MapJoinTableContainerSerDe[] mapJoinTableSerdes, long memUsage) throws HiveException {
+  public void load(MapJoinTableContainer[] mapJoinTables,
+      MapJoinTableContainerSerDe[] mapJoinTableSerdes)
+      throws HiveException {
 
     // Note: it's possible that a MJ operator is in a ReduceWork, in which case the
     // currentInputPath will be null. But, since currentInputPath is only interesting
@@ -111,32 +113,15 @@ public class HashTableLoader implements org.apache.hadoop.hive.ql.exec.HashTable
         }
         String fileName = localWork.getBucketFileName(bigInputPath);
         Path path = Utilities.generatePath(baseDir, desc.getDumpFilePrefix(), (byte) pos, fileName);
-        mapJoinTables[pos] = load(fs, path, mapJoinTableSerdes[pos]);
+        LOG.info("\tLoad back all hashtable files from tmp folder uri:" + path);
+        mapJoinTables[pos] = mapJoinTableSerdes[pos].load(fs, path);
       }
     } catch (Exception e) {
       throw new HiveException(e);
     }
   }
 
-  private MapJoinTableContainer load(FileSystem fs, Path path,
-      MapJoinTableContainerSerDe mapJoinTableSerde) throws HiveException {
-    LOG.info("\tLoad back all hashtable files from tmp folder uri:" + path);
-    if (!SparkUtilities.isDedicatedCluster(hconf)) {
-      return mapJoinTableSerde.load(fs, path);
-    }
-    MapJoinTableContainer mapJoinTable = SmallTableCache.get(path);
-    if (mapJoinTable == null) {
-      synchronized (path.toString().intern()) {
-        mapJoinTable = SmallTableCache.get(path);
-        if (mapJoinTable == null) {
-          mapJoinTable = mapJoinTableSerde.load(fs, path);
-          SmallTableCache.cache(path, mapJoinTable);
-        }
-      }
-    }
-    return mapJoinTable;
-  }
-
+  @SuppressWarnings("unchecked")
   private void loadDirectly(MapJoinTableContainer[] mapJoinTables, String inputFileName)
       throws Exception {
     MapredLocalWork localWork = context.getLocalWork();

@@ -18,14 +18,14 @@
 
 package org.apache.hadoop.hive.ql.exec.vector;
 
+import java.util.Collection;
+import java.util.concurrent.Future;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.ql.exec.FileSinkOperator;
-import org.apache.hadoop.hive.ql.exec.vector.expressions.VectorExpressionWriter;
-import org.apache.hadoop.hive.ql.exec.vector.expressions.VectorExpressionWriterFactory;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.plan.FileSinkDesc;
 import org.apache.hadoop.hive.ql.plan.OperatorDesc;
-import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 
 /**
@@ -35,14 +35,23 @@ public class VectorFileSinkOperator extends FileSinkOperator {
 
   private static final long serialVersionUID = 1L;
 
+  private VectorizationContext vContext;
+
+  // The above members are initialized by the constructor and must not be
+  // transient.
+  //---------------------------------------------------------------------------
+
+  private transient boolean firstBatch;
+
+  private transient VectorExtractRowDynBatch vectorExtractRowDynBatch;
+
   protected transient Object[] singleRow;
 
-  protected transient VectorExpressionWriter[] valueWriters;
-
-  public VectorFileSinkOperator(VectorizationContext context,
+  public VectorFileSinkOperator(VectorizationContext vContext,
       OperatorDesc conf) {
     super();
     this.conf = (FileSinkDesc) conf;
+    this.vContext = vContext;
   }
 
   public VectorFileSinkOperator() {
@@ -50,44 +59,50 @@ public class VectorFileSinkOperator extends FileSinkOperator {
   }
 
   @Override
-  protected void initializeOp(Configuration hconf) throws HiveException {
+  protected Collection<Future<?>> initializeOp(Configuration hconf) throws HiveException {
+
     // We need a input object inspector that is for the row we will extract out of the
     // vectorized row batch, not for example, an original inspector for an ORC table, etc.
-    VectorExpressionWriterFactory.processVectorInspector(
-            (StructObjectInspector) inputObjInspectors[0],
-            new VectorExpressionWriterFactory.SingleOIDClosure() {
-              @Override
-              public void assign(VectorExpressionWriter[] writers,
-                  ObjectInspector objectInspector) {
-                valueWriters = writers;
-                inputObjInspectors[0] = objectInspector;
-              }
-            });
-    singleRow = new Object[valueWriters.length];
+    inputObjInspectors[0] =
+        VectorizedBatchUtil.convertToStandardStructObjectInspector((StructObjectInspector) inputObjInspectors[0]);
 
     // Call FileSinkOperator with new input inspector.
-    super.initializeOp(hconf);
+    Collection<Future<?>> result = super.initializeOp(hconf);
+    assert result.isEmpty();
+
+    firstBatch = true;
+
+    return result;
   }
 
   @Override
-  public void processOp(Object data, int tag) throws HiveException {
-    VectorizedRowBatch vrg = (VectorizedRowBatch)data;
-    for (int i = 0; i < vrg.size; i++) {
-      Object[] row = getRowObject(vrg, i);
-      super.processOp(row, tag);
-    }
-  }
+  public void process(Object data, int tag) throws HiveException {
+    VectorizedRowBatch batch = (VectorizedRowBatch) data;
+    if (firstBatch) {
+      vectorExtractRowDynBatch = new VectorExtractRowDynBatch();
+      vectorExtractRowDynBatch.init((StructObjectInspector) inputObjInspectors[0], vContext.getProjectedColumns());
 
-  private Object[] getRowObject(VectorizedRowBatch vrg, int rowIndex)
-      throws HiveException {
-    int batchIndex = rowIndex;
-    if (vrg.selectedInUse) {
-      batchIndex = vrg.selected[rowIndex];
+      singleRow = new Object[vectorExtractRowDynBatch.getCount()];
+
+      firstBatch = false;
     }
-    for (int i = 0; i < vrg.projectionSize; i++) {
-      ColumnVector vectorColumn = vrg.cols[vrg.projectedColumns[i]];
-      singleRow[i] = valueWriters[i].writeValue(vectorColumn, batchIndex);
+
+    vectorExtractRowDynBatch.setBatchOnEntry(batch);
+
+    if (batch.selectedInUse) {
+      int selected[] = batch.selected;
+      for (int logical = 0 ; logical < batch.size; logical++) {
+        int batchIndex = selected[logical];
+        vectorExtractRowDynBatch.extractRow(batchIndex, singleRow);
+        super.process(singleRow, tag);
+      }
+    } else {
+      for (int batchIndex = 0 ; batchIndex < batch.size; batchIndex++) {
+        vectorExtractRowDynBatch.extractRow(batchIndex, singleRow);
+        super.process(singleRow, tag);
+      }
     }
-    return singleRow;
+
+    vectorExtractRowDynBatch.forgetBatchOnExit();
   }
 }

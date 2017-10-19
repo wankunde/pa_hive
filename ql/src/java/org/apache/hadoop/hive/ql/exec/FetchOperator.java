@@ -29,7 +29,6 @@ import java.util.Map;
 import java.util.Properties;
 
 import org.apache.commons.lang3.StringEscapeUtils;
-import com.google.common.collect.Iterators;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configurable;
@@ -70,9 +69,11 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.JobConfigurable;
 import org.apache.hadoop.mapred.RecordReader;
 import org.apache.hadoop.mapred.Reporter;
-import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hive.common.util.AnnotationUtils;
+import org.apache.hive.common.util.ReflectionUtil;
+
+import com.google.common.collect.Iterators;
 
 /**
  * FetchTask implementation.
@@ -93,7 +94,7 @@ public class FetchOperator implements Serializable {
   private final boolean isPartitioned;
   private final boolean isNonNativeTable;
   private StructObjectInspector vcsOI;
-  private List<VirtualColumn> vcCols;
+  private final List<VirtualColumn> vcCols;
   private ExecMapperContext context;
 
   private transient Deserializer tableSerDe;
@@ -178,7 +179,7 @@ public class FetchOperator implements Serializable {
     if (hasVC || work.getSplitSample() != null) {
       context = new ExecMapperContext(job);
       if (operator != null) {
-        operator.setExecContext(context);
+        operator.passExecContext(context);
       }
     }
     setFetchOperatorContext(job, paths);
@@ -203,13 +204,12 @@ public class FetchOperator implements Serializable {
        JobConf conf) throws IOException {
     if (Configurable.class.isAssignableFrom(inputFormatClass) ||
         JobConfigurable.class.isAssignableFrom(inputFormatClass)) {
-      return (InputFormat<WritableComparable, Writable>) ReflectionUtils
-          .newInstance(inputFormatClass, conf);
+      return ReflectionUtil.newInstance(inputFormatClass, conf);
     }
     InputFormat format = inputFormats.get(inputFormatClass.getName());
     if (format == null) {
       try {
-        format = ReflectionUtils.newInstance(inputFormatClass, conf);
+        format = ReflectionUtil.newInstance(inputFormatClass, conf);
         inputFormats.put(inputFormatClass.getName(), format);
       } catch (Exception e) {
         throw new IOException("Cannot create an instance of InputFormat class "
@@ -229,8 +229,9 @@ public class FetchOperator implements Serializable {
     String[] partKeyTypes = pcolTypes.trim().split(":");
     ObjectInspector[] inspectors = new ObjectInspector[partKeys.length];
     for (int i = 0; i < partKeys.length; i++) {
-      inspectors[i] = TypeInfoUtils.getStandardJavaObjectInspectorFromTypeInfo(
-          TypeInfoFactory.getPrimitiveTypeInfo(partKeyTypes[i]));
+      inspectors[i] = PrimitiveObjectInspectorFactory
+          .getPrimitiveWritableObjectInspector(TypeInfoFactory
+              .getPrimitiveTypeInfo(partKeyTypes[i]));
     }
     return ObjectInspectorFactory.getStandardStructObjectInspector(
         Arrays.asList(partKeys), Arrays.asList(inspectors));
@@ -406,7 +407,7 @@ public class FetchOperator implements Serializable {
   public boolean pushRow() throws IOException, HiveException {
     if (work.getRowsComputedUsingStats() != null) {
       for (List<Object> row : work.getRowsComputedUsingStats()) {
-        operator.processOp(row, 0);
+        operator.process(row, 0);
       }
       flushRow();
       return true;
@@ -421,7 +422,7 @@ public class FetchOperator implements Serializable {
   }
 
   protected void pushRow(InspectableObject row) throws HiveException {
-    operator.processOp(row.o, 0);
+    operator.process(row.o, 0);
   }
 
   protected void flushRow() throws HiveException {
@@ -662,7 +663,7 @@ public class FetchOperator implements Serializable {
     // what's different is that this is evaluated by unit of row using RecordReader.getPos()
     // and that is evaluated by unit of split using InputSplit.getLength().
     private long shrinkedLength = -1;
-    private InputFormat inputFormat;
+    private final InputFormat inputFormat;
 
     public FetchInputFormatSplit(InputSplit split, InputFormat inputFormat) {
       super(split, inputFormat.getClass().getName());

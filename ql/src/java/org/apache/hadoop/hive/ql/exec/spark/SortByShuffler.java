@@ -56,11 +56,6 @@ public class SortByShuffler implements SparkShuffler {
     return rdd.mapPartitionsToPair(new ShuffleFunction());
   }
 
-  @Override
-  public String getName() {
-    return "SortBy";
-  }
-
   private static class ShuffleFunction implements
       PairFlatMapFunction<Iterator<Tuple2<HiveKey, BytesWritable>>,
           HiveKey, Iterable<BytesWritable>> {

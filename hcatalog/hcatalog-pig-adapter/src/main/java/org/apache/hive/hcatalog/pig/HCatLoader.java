@@ -19,6 +19,7 @@
 package org.apache.hive.hcatalog.pig;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
@@ -31,6 +32,7 @@ import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.common.classification.InterfaceStability;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.ql.metadata.Table;
+import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
 import org.apache.hadoop.mapreduce.InputFormat;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.security.Credentials;
@@ -121,7 +123,7 @@ public class HCatLoader extends HCatBaseLoader {
         job.getCredentials().addAll(crd);
       }
     } else {
-      Job clone = Job.getInstance(job.getConfiguration());
+      Job clone = new Job(job.getConfiguration());
       HCatInputFormat.setInput(job, dbName, tableName, getPartitionFilterString());
 
       InputJobInfo inputJobInfo = (InputJobInfo) HCatUtil.deserialize(
@@ -161,6 +163,12 @@ public class HCatLoader extends HCatBaseLoader {
     if (requiredFieldsInfo != null) {
       // convert to hcatschema and pass to HCatInputFormat
       try {
+        //push down projections to columnar store works for RCFile and ORCFile
+        ArrayList<Integer> list = new ArrayList<Integer>(requiredFieldsInfo.getFields().size());
+        for (RequiredField rf : requiredFieldsInfo.getFields()) {
+          list.add(rf.getIndex());
+        }
+        ColumnProjectionUtils.appendReadColumns(job.getConfiguration(), list);
         outputSchema = phutil.getHCatSchema(requiredFieldsInfo.getFields(), signature, this.getClass());
         HCatInputFormat.setOutputSchema(job, outputSchema);
       } catch (Exception e) {

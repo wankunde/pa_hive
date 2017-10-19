@@ -55,6 +55,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import junit.framework.Assert;
+import junit.framework.TestSuite;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.io.FileUtils;
@@ -157,6 +158,10 @@ public class QTestUtil {
 
   private final String initScript;
   private final String cleanupScript;
+
+  public interface SuiteAddTestFunctor {
+    public void addTestToSuite(TestSuite suite, Object setup, String tName);
+  }
 
   static {
     for (String srcTable : System.getProperty("test.src.tables", "").trim().split(",")) {
@@ -519,14 +524,7 @@ public class QTestUtil {
     boolean excludeQuery = false;
     boolean includeQuery = false;
     Set<String> versionSet = new HashSet<String>();
-    // in CDH hadoop version 0.23/2.x contains MR1 as such we need special
-    // rules to ensure we don't run files for MR2 under MR1 and vice versa
-    String hadoopVer;
-    if (org.apache.hadoop.mapred.MRVersion.isMR2()) {
-      hadoopVer = "0.23";
-    } else {
-      hadoopVer = "0.20S";
-    }
+    String hadoopVer = ShimLoader.getMajorVersion();
 
     Matcher matcher = pattern.matcher(query);
 
@@ -733,14 +731,12 @@ public class QTestUtil {
     clearTablesCreatedDuringTests();
     clearKeysCreatedInTests();
 
-    if (clusterType != MiniClusterType.encrypted) {
-      // allocate and initialize a new conf since a test can
-      // modify conf by using 'set' commands
-      conf = new HiveConf (Driver.class);
-      initConf();
-      // renew the metastore since the cluster type is unencrypted
-      db = Hive.get(conf);  // propagate new conf to meta store
-    }
+    // allocate and initialize a new conf since a test can
+    // modify conf by using 'set' commands
+    conf = new HiveConf(Driver.class);
+    initConf();
+    // renew the metastore since the cluster type is unencrypted
+    db = Hive.get(conf);  // propagate new conf to meta store
 
     setup.preTest(conf);
   }
@@ -1034,7 +1030,7 @@ public class QTestUtil {
       }
       command = "";
     }
-    if (SessionState.get() != null) {
+    if (rc == 0 && SessionState.get() != null) {
       SessionState.get().setLastCommand(null);  // reset
     }
     return rc;
@@ -2007,5 +2003,43 @@ public class QTestUtil {
         org.apache.hadoop.util.StringUtils.stringifyException(e) + "\n" +
         (command != null ? " running " + command : "") +
         (debugHint != null ? debugHint : ""));
+  }
+
+  public static void addTestsToSuiteFromQfileNames(
+    String qFileNamesFile,
+    Set<String> qFilesToExecute,
+    TestSuite suite,
+    Object setup,
+    SuiteAddTestFunctor suiteAddTestCallback) {
+    try {
+      File qFileNames = new File(qFileNamesFile);
+      FileReader fr = new FileReader(qFileNames.getCanonicalFile());
+      BufferedReader br = new BufferedReader(fr);
+      String fName = null;
+
+      while ((fName = br.readLine()) != null) {
+        if (fName.isEmpty() || fName.trim().equals("")) {
+          continue;
+        }
+
+        int eIdx = fName.indexOf('.');
+
+        if (eIdx == -1) {
+          continue;
+        }
+
+        String tName = fName.substring(0, eIdx);
+
+        if (qFilesToExecute.isEmpty() || qFilesToExecute.contains(fName)) {
+          suiteAddTestCallback.addTestToSuite(suite, setup, tName);
+        }
+      }
+      br.close();
+    } catch (Exception e) {
+      System.err.println("Exception: " + e.getMessage());
+      e.printStackTrace();
+      System.err.flush();
+      Assert.fail("Unexpected exception " + org.apache.hadoop.util.StringUtils.stringifyException(e));
+    }
   }
 }

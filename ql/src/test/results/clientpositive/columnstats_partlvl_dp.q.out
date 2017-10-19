@@ -76,7 +76,7 @@ analyze table Employee_Part partition (employeeSalary='4000.0', country) compute
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
   Stage-0 is a root stage
-  Stage-1 is a root stage
+  Stage-1 depends on stages: Stage-0
 
 STAGE PLANS:
   Stage: Stage-0
@@ -118,7 +118,7 @@ STAGE PLANS:
       Column Stats Desc:
           Columns: employeeName, employeeID
           Column Types: string, int
-          Table: employee_part
+          Table: default.employee_part
 
 PREHOOK: query: analyze table Employee_Part partition (employeeSalary='4000.0', country) compute statistics for columns employeeName, employeeID
 PREHOOK: type: QUERY
@@ -149,7 +149,7 @@ analyze table Employee_Part partition (employeeSalary='2000.0') compute statisti
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
   Stage-0 is a root stage
-  Stage-1 is a root stage
+  Stage-1 depends on stages: Stage-0
 
 STAGE PLANS:
   Stage: Stage-0
@@ -191,7 +191,7 @@ STAGE PLANS:
       Column Stats Desc:
           Columns: employeeID
           Column Types: int
-          Table: employee_part
+          Table: default.employee_part
 
 PREHOOK: query: analyze table Employee_Part partition (employeeSalary='2000.0') compute statistics for columns employeeID
 PREHOOK: type: QUERY
@@ -233,7 +233,7 @@ analyze table Employee_Part partition (employeeSalary) compute statistics for co
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
   Stage-0 is a root stage
-  Stage-1 is a root stage
+  Stage-1 depends on stages: Stage-0
 
 STAGE PLANS:
   Stage: Stage-0
@@ -275,7 +275,7 @@ STAGE PLANS:
       Column Stats Desc:
           Columns: employeeID
           Column Types: int
-          Table: employee_part
+          Table: default.employee_part
 
 PREHOOK: query: analyze table Employee_Part partition (employeeSalary) compute statistics for columns employeeID
 PREHOOK: type: QUERY
@@ -314,7 +314,7 @@ analyze table Employee_Part partition (employeeSalary,country) compute statistic
 POSTHOOK: type: QUERY
 STAGE DEPENDENCIES:
   Stage-0 is a root stage
-  Stage-1 is a root stage
+  Stage-1 depends on stages: Stage-0
 
 STAGE PLANS:
   Stage: Stage-0
@@ -356,7 +356,7 @@ STAGE PLANS:
       Column Stats Desc:
           Columns: employeeid, employeename
           Column Types: int, string
-          Table: employee_part
+          Table: default.employee_part
 
 PREHOOK: query: analyze table Employee_Part partition (employeeSalary,country) compute statistics for columns
 PREHOOK: type: QUERY

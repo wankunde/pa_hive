@@ -43,6 +43,7 @@ public interface PredicateLeaf {
    * The possible types for sargs.
    */
   public static enum Type {
+    INTEGER, // all of the integer types except long
     LONG,
     FLOAT,   // float and double
     STRING,  // string, char, varchar
@@ -50,14 +51,6 @@ public interface PredicateLeaf {
     DECIMAL,
     TIMESTAMP,
     BOOLEAN
-  }
-
-  /**
-   * file format which supports search arguments
-   */
-  public static enum FileFormat {
-    ORC,
-    PARQUET
   }
 
   /**
@@ -78,16 +71,17 @@ public interface PredicateLeaf {
 
   /**
    * Get the literal half of the predicate leaf. Adapt the original type for what orc needs
-   * @return a Long, Double, or String for Orc and a Int, Long, Double, or String for parquet
+   *
+   * @return an Integer, Long, Double, or String
    */
-  public Object getLiteral(FileFormat format);
+  public Object getLiteral();
 
   /**
    * For operators with multiple literals (IN and BETWEEN), get the literals.
    *
-   * @return the list of literals (Longs, Doubles, or Strings) for orc or the list of literals
-   * (Integer, Longs, Doubles, or String) for parquet
+   * @return the list of literals (Integer, Longs, Doubles, or Strings)
+   *
    */
-  public List<Object> getLiteralList(FileFormat format);
+  public List<Object> getLiteralList();
 
 }

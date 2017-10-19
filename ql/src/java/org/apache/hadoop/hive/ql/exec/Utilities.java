@@ -46,6 +46,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLTransientException;
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
@@ -139,6 +140,7 @@ import org.apache.hadoop.hive.ql.metadata.InputEstimator;
 import org.apache.hadoop.hive.ql.metadata.Partition;
 import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
+import org.apache.hadoop.hive.ql.plan.AbstractOperatorDesc;
 import org.apache.hadoop.hive.ql.plan.BaseWork;
 import org.apache.hadoop.hive.ql.plan.DynamicPartitionCtx;
 import org.apache.hadoop.hive.ql.plan.ExprNodeGenericFuncDesc;
@@ -183,8 +185,8 @@ import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.SequenceFileInputFormat;
 import org.apache.hadoop.mapred.SequenceFileOutputFormat;
 import org.apache.hadoop.util.Progressable;
-import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.Shell;
+import org.apache.hive.common.util.ReflectionUtil;
 
 import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.io.Input;
@@ -211,6 +213,8 @@ public final class Utilities {
   public static final String MAPRED_MAPPER_CLASS = "mapred.mapper.class";
   public static final String MAPRED_REDUCER_CLASS = "mapred.reducer.class";
   public static final String HIVE_ADDED_JARS = "hive.added.jars";
+  public static String MAPNAME = "Map ";
+  public static String REDUCENAME = "Reducer ";
 
   /**
    * ReduceField:
@@ -242,6 +246,7 @@ public final class Utilities {
 
   private static ThreadLocal<Map<Path, BaseWork>> gWorkMap =
       new ThreadLocal<Map<Path, BaseWork>>() {
+    @Override
     protected Map<Path, BaseWork> initialValue() {
       return new HashMap<Path, BaseWork>();
     }
@@ -307,12 +312,13 @@ public final class Utilities {
   public static Path setMergeWork(JobConf conf, MergeJoinWork mergeJoinWork, Path mrScratchDir,
       boolean useCache) {
     for (BaseWork baseWork : mergeJoinWork.getBaseWorkList()) {
-      setBaseWork(conf, baseWork, mrScratchDir, baseWork.getName() + MERGE_PLAN_NAME, useCache);
+      String prefix = baseWork.getName();
+      setBaseWork(conf, baseWork, mrScratchDir, prefix + MERGE_PLAN_NAME, useCache);
       String prefixes = conf.get(DagUtils.TEZ_MERGE_WORK_FILE_PREFIXES);
       if (prefixes == null) {
-        prefixes = baseWork.getName();
+        prefixes = prefix;
       } else {
-        prefixes = prefixes + "," + baseWork.getName();
+        prefixes = prefixes + "," + prefix;
       }
       conf.set(DagUtils.TEZ_MERGE_WORK_FILE_PREFIXES, prefixes);
     }
@@ -432,7 +438,13 @@ public final class Utilities {
                 + MAPRED_REDUCER_CLASS +" was "+ conf.get(MAPRED_REDUCER_CLASS)) ;
           }
         } else if (name.contains(MERGE_PLAN_NAME)) {
-          gWork = deserializePlan(in, MapWork.class, conf);
+          if (name.startsWith(MAPNAME)) {
+            gWork = deserializePlan(in, MapWork.class, conf);
+          } else if (name.startsWith(REDUCENAME)) {
+            gWork = deserializePlan(in, ReduceWork.class, conf);
+          } else {
+            throw new RuntimeException("Unknown work type: " + name);
+          }
         }
         gWorkMap.get().put(path, gWork);
       } else if (LOG.isDebugEnabled()) {
@@ -457,9 +469,9 @@ public final class Utilities {
     }
   }
 
-  public static Map<String, Map<Integer, String>> getMapWorkAllScratchColumnVectorTypeMaps(Configuration hiveConf) {
+  public static Map<Integer, String> getMapWorkVectorScratchColumnTypeMap(Configuration hiveConf) {
     MapWork mapWork = getMapWork(hiveConf);
-    return mapWork.getAllScratchColumnVectorTypeMaps();
+    return mapWork.getVectorScratchColumnTypeMap();
   }
 
   public static void setWorkflowAdjacencies(Configuration conf, QueryPlan plan) {
@@ -920,7 +932,7 @@ public final class Utilities {
   }
 
   private static void serializePlan(Object plan, OutputStream out, Configuration conf, boolean cloningPlan) {
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.SERIALIZE_PLAN);
     String serializationType = conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo");
     LOG.info("Serializing " + plan.getClass().getSimpleName() + " via " + serializationType);
@@ -946,7 +958,7 @@ public final class Utilities {
   }
 
   private static <T> T deserializePlan(InputStream in, Class<T> planClass, Configuration conf, boolean cloningPlan) {
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.DESERIALIZE_PLAN);
     T plan;
     String serializationType = conf.get(HiveConf.ConfVars.PLAN_SERIALIZATION.varname, "kryo");
@@ -981,7 +993,7 @@ public final class Utilities {
    */
   public static MapredWork clonePlan(MapredWork plan) {
     // TODO: need proper clone. Meanwhile, let's at least keep this horror in one place
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.CLONE_PLAN);
     ByteArrayOutputStream baos = new ByteArrayOutputStream(4096);
     Configuration conf = new HiveConf();
@@ -998,7 +1010,7 @@ public final class Utilities {
    * @return The clone.
    */
   public static BaseWork cloneBaseWork(BaseWork plan) {
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.CLONE_PLAN);
     ByteArrayOutputStream baos = new ByteArrayOutputStream(4096);
     Configuration conf = new HiveConf();
@@ -1084,6 +1096,7 @@ public final class Utilities {
       kryo.setInstantiatorStrategy(new StdInstantiatorStrategy());
       removeField(kryo, Operator.class, "colExprMap");
       removeField(kryo, ColumnInfo.class, "objectInspector");
+      removeField(kryo, AbstractOperatorDesc.class, "statistics");
       return kryo;
     };
   };
@@ -1389,7 +1402,7 @@ public final class Utilities {
     if (isCompressed) {
       Class<? extends CompressionCodec> codecClass = FileOutputFormat.getOutputCompressorClass(jc,
           DefaultCodec.class);
-      CompressionCodec codec = ReflectionUtils.newInstance(codecClass, jc);
+      CompressionCodec codec = ReflectionUtil.newInstance(codecClass, jc);
       return codec.createOutputStream(out);
     } else {
       return (out);
@@ -1438,7 +1451,7 @@ public final class Utilities {
     if ((hiveOutputFormat instanceof HiveIgnoreKeyTextOutputFormat) && isCompressed) {
       Class<? extends CompressionCodec> codecClass = FileOutputFormat.getOutputCompressorClass(jc,
           DefaultCodec.class);
-      CompressionCodec codec = ReflectionUtils.newInstance(codecClass, jc);
+      CompressionCodec codec = ReflectionUtil.newInstance(codecClass, jc);
       return codec.getDefaultExtension();
     }
     return "";
@@ -1490,7 +1503,7 @@ public final class Utilities {
     if (isCompressed) {
       compressionType = SequenceFileOutputFormat.getOutputCompressionType(jc);
       codecClass = FileOutputFormat.getOutputCompressorClass(jc, DefaultCodec.class);
-      codec = (CompressionCodec) ReflectionUtils.newInstance(codecClass, jc);
+      codec = (CompressionCodec) ReflectionUtil.newInstance(codecClass, jc);
     }
     return SequenceFile.createWriter(fs, jc, file, keyClass, valClass, compressionType, codec,
       progressable);
@@ -1514,7 +1527,7 @@ public final class Utilities {
     CompressionCodec codec = null;
     if (isCompressed) {
       Class<?> codecClass = FileOutputFormat.getOutputCompressorClass(jc, DefaultCodec.class);
-      codec = (CompressionCodec) ReflectionUtils.newInstance(codecClass, jc);
+      codec = (CompressionCodec) ReflectionUtil.newInstance(codecClass, jc);
     }
     return new RCFile.Writer(fs, jc, file, progressable, codec);
   }
@@ -2417,7 +2430,7 @@ public final class Utilities {
    * @param job
    *          configuration which receives configured properties
    */
-  public static void copyTableJobPropertiesToConf(TableDesc tbl, JobConf job) {
+  public static void copyTableJobPropertiesToConf(TableDesc tbl, Configuration job) {
     Properties tblProperties = tbl.getProperties();
     for(String name: tblProperties.stringPropertyNames()) {
       if (job.get(name) == null) {
@@ -2478,7 +2491,7 @@ public final class Utilities {
    */
   public static ContentSummary getInputSummary(final Context ctx, MapWork work, PathFilter filter)
       throws IOException {
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.INPUT_SUMMARY);
 
     long[] summary = {0, 0, 0};
@@ -2926,7 +2939,7 @@ public final class Utilities {
 
   public static String now() {
     Calendar cal = Calendar.getInstance();
-    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss");
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     return sdf.format(cal.getTime());
   }
 
@@ -2967,7 +2980,7 @@ public final class Utilities {
 
         if (reworkInputFormats.size() > 0) {
           for (Class<? extends InputFormat> inputFormatCls : reworkInputFormats) {
-            ReworkMapredInputFormat inst = (ReworkMapredInputFormat) ReflectionUtils
+            ReworkMapredInputFormat inst = (ReworkMapredInputFormat) ReflectionUtil
                 .newInstance(inputFormatCls, null);
             inst.rework(conf, mapredWork);
           }
@@ -3106,6 +3119,24 @@ public final class Utilities {
         // just throw other types (SQLNonTransientException / SQLRecoverableException)
         throw e;
       }
+    }
+  }
+
+  public static void setQueryTimeout(java.sql.Statement stmt, int timeout) throws SQLException {
+    if (timeout < 0) {
+      LOG.info("Invalid query timeout " + timeout);
+      return;
+    }
+    try {
+      stmt.setQueryTimeout(timeout);
+    } catch (SQLException e) {
+      String message = e.getMessage() == null ? null : e.getMessage().toLowerCase();
+      if (e instanceof SQLFeatureNotSupportedException ||
+         (message != null && (message.contains("implemented") || message.contains("supported")))) {
+        LOG.info("setQueryTimeout is not supported");
+        return;
+      }
+      throw e;
     }
   }
 
@@ -3673,7 +3704,7 @@ public final class Utilities {
   public static boolean isVectorMode(Configuration conf) {
     if (HiveConf.getBoolVar(conf, HiveConf.ConfVars.HIVE_VECTORIZATION_ENABLED) &&
         Utilities.getPlanPath(conf) != null && Utilities
-        .getMapRedWork(conf).getMapWork().getVectorMode()) {
+        .getMapWork(conf).getVectorMode()) {
       return true;
     }
     return false;
@@ -3822,4 +3853,17 @@ public final class Utilities {
   public static boolean isDefaultNameNode(HiveConf conf) {
     return !conf.getChangedProperties().containsKey(HiveConf.ConfVars.HADOOPFS.varname);
   }
+
+  /**
+   * Checks if the current HiveServer2 logging operation level is >= PERFORMANCE.
+   * @param conf Hive configuration.
+   * @return true if current HiveServer2 logging operation level is >= PERFORMANCE.
+   * Else, false.
+   */
+  public static boolean isPerfOrAboveLogging(HiveConf conf) {
+    String loggingLevel = conf.getVar(HiveConf.ConfVars.HIVE_SERVER2_LOGGING_OPERATION_LEVEL);
+    return conf.getBoolVar(HiveConf.ConfVars.HIVE_SERVER2_LOGGING_OPERATION_ENABLED) &&
+      (loggingLevel.equalsIgnoreCase("PERFORMANCE") || loggingLevel.equalsIgnoreCase("VERBOSE"));
+  }
+
 }

@@ -79,9 +79,6 @@ public class TezSessionState {
   private final Set<LocalResource> localizedResources = new HashSet<LocalResource>();
   private boolean doAsEnabled;
 
-  private static List<TezSessionState> openSessions
-    = Collections.synchronizedList(new LinkedList<TezSessionState>());
-
   /**
    * Constructor. We do not automatically connect, because we only want to
    * load tez classes when the user has tez installed.
@@ -110,10 +107,6 @@ public class TezSessionState {
    * Get all open sessions. Only used to clean up at shutdown.
    * @return List<TezSessionState>
    */
-  public static List<TezSessionState> getOpenSessions() {
-    return openSessions;
-  }
-
   public static String makeSessionId() {
     return UUID.randomUUID().toString();
   }
@@ -172,6 +165,7 @@ public class TezSessionState {
     // generate basic tez config
     TezConfiguration tezConfig = new TezConfiguration(conf);
     tezConfig.set(TezConfiguration.TEZ_AM_STAGING_DIR, tezScratchDir.toUri().toString());
+    conf.stripHiddenConfigurations(tezConfig);
 
     if (HiveConf.getBoolVar(conf, ConfVars.HIVE_PREWARM_ENABLED)) {
       int n = HiveConf.getIntVar(conf, ConfVars.HIVE_PREWARM_NUM_CONTAINERS);
@@ -213,8 +207,6 @@ public class TezSessionState {
     } catch(InterruptedException ie) {
       //ignore
     }
-
-    openSessions.add(this);
   }
 
   public void refreshLocalResourcesFromConf(HiveConf conf)
@@ -263,7 +255,6 @@ public class TezSessionState {
     LOG.info("Closing Tez Session");
     try {
       session.stop();
-      openSessions.remove(this);
     } catch (SessionNotRunning nr) {
       // ignore
     }

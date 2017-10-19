@@ -10,11 +10,9 @@ CREATE TABLE encrypted_table_dp (key INT, value STRING) partitioned by (p STRING
 CRYPTO CREATE_KEY --keyName key_128 --bitLength 128;
 CRYPTO CREATE_ZONE --keyName key_128 --path ${hiveconf:hive.metastore.warehouse.dir}/default/encrypted_table_dp;
 
-INSERT INTO encrypted_table_dp PARTITION(p) values(1, 'foo', '2014-09-23'),(2, 'bar', '2014-09-24');
+INSERT INTO encrypted_table_dp PARTITION(p)(p,key,value) values('2014-09-23', 1, 'foo'),('2014-09-24', 2, 'bar');
 SELECT * FROM encrypted_table_dp;
 ALTER TABLE encrypted_table_dp DROP PARTITION (p='2014-09-23');
 SELECT * FROM encrypted_table_dp;
 ALTER TABLE encrypted_table_dp DROP PARTITION (p='2014-09-23') PURGE;
-SELECT * FROM encrypted_table_dp;
-ALTER TABLE encrypted_table_dp ADD PARTITION (p='2014-09-23');
 SELECT * FROM encrypted_table_dp;

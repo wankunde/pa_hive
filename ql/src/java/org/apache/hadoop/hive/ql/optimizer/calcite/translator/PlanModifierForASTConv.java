@@ -18,14 +18,11 @@
 package org.apache.hadoop.hive.ql.optimizer.calcite.translator;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.plan.volcano.RelSubset;
-import org.apache.calcite.rel.RelCollationImpl;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.SingleRel;
 import org.apache.calcite.rel.core.Aggregate;
@@ -40,7 +37,6 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlAggFunction;
-import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.util.Pair;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -50,13 +46,15 @@ import org.apache.hadoop.hive.ql.optimizer.calcite.HiveCalciteUtil;
 import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveAggregate;
 import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveProject;
 import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveSort;
+import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveTableScan;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 
 public class PlanModifierForASTConv {
+
   private static final Log LOG = LogFactory.getLog(PlanModifierForASTConv.class);
+
 
   public static RelNode convertOpTree(RelNode rel, List<FieldSchema> resultSchema)
       throws CalciteSemanticException {
@@ -79,7 +77,7 @@ public class PlanModifierForASTConv {
     }
 
     Pair<RelNode, RelNode> topSelparentPair = HiveCalciteUtil.getTopLevelSelect(newTopNode);
-    fixTopOBSchema(newTopNode, topSelparentPair, resultSchema);
+    PlanModifierUtil.fixTopOBSchema(newTopNode, topSelparentPair, resultSchema, true);
     if (LOG.isDebugEnabled()) {
       LOG.debug("Plan after fixTopOBSchema\n " + RelOptUtil.toString(newTopNode));
     }
@@ -92,6 +90,23 @@ public class PlanModifierForASTConv {
     return newTopNode;
   }
 
+  private static String getTblAlias(RelNode rel) {
+
+    if (null == rel) {
+      return null;
+    }
+    if (rel instanceof HiveTableScan) {
+      return ((HiveTableScan)rel).getTableAlias();
+    }
+    if (rel instanceof Project) {
+      return null;
+    }
+    if (rel.getInputs().size() == 1) {
+      return getTblAlias(rel.getInput(0));
+    }
+    return null;
+  }
+
   private static void convertOpTree(RelNode rel, RelNode parent) {
 
     if (rel instanceof HepRelVertex) {
@@ -99,6 +114,12 @@ public class PlanModifierForASTConv {
     } else if (rel instanceof Join) {
       if (!validJoinParent(rel, parent)) {
         introduceDerivedTable(rel, parent);
+      }
+      String leftChild = getTblAlias(((Join)rel).getLeft());
+      if (null != leftChild && leftChild.equalsIgnoreCase(getTblAlias(((Join)rel).getRight()))) {
+        // introduce derived table above one child, if this is self-join
+        // since user provided aliases are lost at this point.
+        introduceDerivedTable(((Join)rel).getLeft(), rel);
       }
     } else if (rel instanceof MultiJoin) {
       throw new RuntimeException("Found MultiJoin");
@@ -148,59 +169,6 @@ public class PlanModifierForASTConv {
     }
   }
 
-  private static void fixTopOBSchema(final RelNode rootRel,
-      Pair<RelNode, RelNode> topSelparentPair, List<FieldSchema> resultSchema)
-      throws CalciteSemanticException {
-    if (!(topSelparentPair.getKey() instanceof Sort)
-        || !HiveCalciteUtil.orderRelNode(topSelparentPair.getKey())) {
-      return;
-    }
-    HiveSort obRel = (HiveSort) topSelparentPair.getKey();
-    Project obChild = (Project) topSelparentPair.getValue();
-    if (obChild.getRowType().getFieldCount() <= resultSchema.size()) {
-      return;
-    }
-
-    RelDataType rt = obChild.getRowType();
-    @SuppressWarnings({ "unchecked", "rawtypes" })
-    Set<Integer> collationInputRefs = new HashSet(
-        RelCollationImpl.ordinals(obRel.getCollation()));
-    ImmutableMap.Builder<Integer, RexNode> inputRefToCallMapBldr = ImmutableMap.builder();
-    for (int i = resultSchema.size(); i < rt.getFieldCount(); i++) {
-      if (collationInputRefs.contains(i)) {
-        inputRefToCallMapBldr.put(i, obChild.getChildExps().get(i));
-      }
-    }
-    ImmutableMap<Integer, RexNode> inputRefToCallMap = inputRefToCallMapBldr.build();
-
-    if ((obChild.getRowType().getFieldCount() - inputRefToCallMap.size()) != resultSchema.size()) {
-      LOG.error(generateInvalidSchemaMessage(obChild, resultSchema, inputRefToCallMap.size()));
-      throw new CalciteSemanticException("Result Schema didn't match Optimized Op Tree Schema");
-    }
-    // This removes order-by only expressions from the projections.
-    HiveProject replacementProjectRel = HiveProject.create(obChild.getInput(), obChild
-        .getChildExps().subList(0, resultSchema.size()), obChild.getRowType().getFieldNames()
-        .subList(0, resultSchema.size()));
-    obRel.replaceInput(0, replacementProjectRel);
-    obRel.setInputRefToCallMap(inputRefToCallMap);
-  }
-
-  private static String generateInvalidSchemaMessage(Project topLevelProj,
-      List<FieldSchema> resultSchema, int fieldsForOB) {
-    String errorDesc = "Result Schema didn't match Calcite Optimized Op Tree; schema: ";
-    for (FieldSchema fs : resultSchema) {
-      errorDesc += "[" + fs.getName() + ":" + fs.getType() + "], ";
-    }
-    errorDesc += " projection fields: ";
-    for (RexNode exp : topLevelProj.getChildExps()) {
-      errorDesc += "[" + exp.toString() + ":" + exp.getType() + "], ";
-    }
-    if (fieldsForOB != 0) {
-      errorDesc += fieldsForOB + " fields removed due to ORDER BY  ";
-    }
-    return errorDesc.substring(0, errorDesc.length() - 2);
-  }
-
   private static RelNode renameTopLevelSelectInResultSchema(final RelNode rootRel,
       Pair<RelNode, RelNode> topSelparentPair, List<FieldSchema> resultSchema)
       throws CalciteSemanticException {
@@ -212,7 +180,7 @@ public class PlanModifierForASTConv {
     List<RexNode> rootChildExps = originalProjRel.getChildExps();
     if (resultSchema.size() != rootChildExps.size()) {
       // Safeguard against potential issues in CBO RowResolver construction. Disable CBO for now.
-      LOG.error(generateInvalidSchemaMessage(originalProjRel, resultSchema, 0));
+      LOG.error(PlanModifierUtil.generateInvalidSchemaMessage(originalProjRel, resultSchema, 0));
       throw new CalciteSemanticException("Result Schema didn't match Optimized Op Tree Schema");
     }
 
@@ -266,7 +234,7 @@ public class PlanModifierForASTConv {
     RelNode select = introduceDerivedTable(rel);
 
     parent.replaceInput(pos, select);
-    
+
     return select;
   }
 
@@ -274,7 +242,15 @@ public class PlanModifierForASTConv {
     boolean validParent = true;
 
     if (parent instanceof Join) {
-      if (((Join) parent).getRight() == joinNode) {
+      // In Hive AST, right child of join cannot be another join,
+      // thus we need to introduce a project on top of it.
+      // But we only need the additional project if the left child
+      // is another join too; if it is not, ASTConverter will swap
+      // the join inputs, leaving the join operator on the left.
+      // This will help triggering multijoin recognition methods that
+      // are embedded in SemanticAnalyzer.
+      if (((Join) parent).getRight() == joinNode &&
+            (((Join) parent).getLeft() instanceof Join) ) {
         validParent = false;
       }
     } else if (parent instanceof SetOp) {
@@ -287,7 +263,7 @@ public class PlanModifierForASTConv {
   private static boolean validFilterParent(RelNode filterNode, RelNode parent) {
     boolean validParent = true;
 
-    // TOODO: Verify GB having is not a seperate filter (if so we shouldn't
+    // TODO: Verify GB having is not a separate filter (if so we shouldn't
     // introduce derived table)
     if (parent instanceof Filter || parent instanceof Join
         || parent instanceof SetOp) {
@@ -352,7 +328,7 @@ public class PlanModifierForASTConv {
 
     return validChild;
   }
-  
+
   private static boolean isEmptyGrpAggr(RelNode gbNode) {
     // Verify if both groupset and aggrfunction are empty)
     Aggregate aggrnode = (Aggregate) gbNode;
@@ -361,12 +337,12 @@ public class PlanModifierForASTConv {
     }
     return false;
   }
-  
+
   private static void replaceEmptyGroupAggr(final RelNode rel, RelNode parent) {
     // If this function is called, the parent should only include constant
     List<RexNode> exps = parent.getChildExps();
     for (RexNode rexNode : exps) {
-      if (rexNode.getKind() != SqlKind.LITERAL) {
+      if (!rexNode.accept(new HiveCalciteUtil.ConstantFinder())) {
         throw new RuntimeException("We expect " + parent.toString()
             + " to contain only constants. However, " + rexNode.toString() + " is "
             + rexNode.getKind());
@@ -377,7 +353,7 @@ public class PlanModifierForASTConv {
     RelDataType longType = TypeConverter.convert(TypeInfoFactory.longTypeInfo, typeFactory);
     RelDataType intType = TypeConverter.convert(TypeInfoFactory.intTypeInfo, typeFactory);
     // Create the dummy aggregation.
-    SqlAggFunction countFn = (SqlAggFunction) SqlFunctionConverter.getCalciteAggFn("count",
+    SqlAggFunction countFn = SqlFunctionConverter.getCalciteAggFn("count",
         ImmutableList.of(intType), longType);
     // TODO: Using 0 might be wrong; might need to walk down to find the
     // proper index of a dummy.

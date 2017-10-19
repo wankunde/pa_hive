@@ -52,9 +52,12 @@
 package org.apache.hive.beeline;
 
 import jline.console.completer.StringsCompleter;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.FileInputStream;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -62,17 +65,25 @@ import java.net.URLConnection;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.Enumeration;
 import java.util.TreeSet;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipEntry;
 
 /**
  * the completer is original provided in JLine 0.9.94 and is being removed in 2.12. Add the
  * previous implement for usage of the beeline.
  */
 public class ClassNameCompleter extends StringsCompleter {
+
+  private static final Log LOG = LogFactory.getLog(ClassNameCompleter.class.getName());
+  public final static String clazzFileNameExtension = ".class";
+  public final static String jarFileNameExtension = ".jar";
 
   public ClassNameCompleter(String... candidates) {
     super(candidates);
@@ -81,7 +92,7 @@ public class ClassNameCompleter extends StringsCompleter {
   public static String[] getClassNames() throws IOException {
     Set urls = new HashSet();
 
-    for (ClassLoader loader = ClassNameCompleter.class.getClassLoader(); loader != null;
+    for (ClassLoader loader = Thread.currentThread().getContextClassLoader(); loader != null;
          loader = loader.getParent()) {
       if (!(loader instanceof URLClassLoader)) {
         continue;
@@ -97,7 +108,7 @@ public class ClassNameCompleter extends StringsCompleter {
 
     for (int i = 0; i < systemClasses.length; i++) {
       URL classURL = systemClasses[i]
-              .getResource("/" + systemClasses[i].getName().replace('.', '/') + ".class");
+              .getResource("/" + systemClasses[i].getName().replace('.', '/') + clazzFileNameExtension);
 
       if (classURL != null) {
         URLConnection uc = classURL.openConnection();
@@ -112,36 +123,42 @@ public class ClassNameCompleter extends StringsCompleter {
 
     for (Iterator i = urls.iterator(); i.hasNext(); ) {
       URL url = (URL) i.next();
-      File file = new File(url.getFile());
+      try {
+        File file = new File(url.getFile());
 
-      if (file.isDirectory()) {
-        Set files = getClassFiles(file.getAbsolutePath(), new HashSet(), file, new int[]{200});
-        classes.addAll(files);
+        if (file.isDirectory()) {
+          Set files = getClassFiles(file.getAbsolutePath(), new HashSet(), file, new int[] { 200 });
+          classes.addAll(files);
 
-        continue;
-      }
-
-      if ((file == null) || !file.isFile()) {
-        continue;
-      }
-
-      JarFile jf = new JarFile(file);
-
-      for (Enumeration e = jf.entries(); e.hasMoreElements(); ) {
-        JarEntry entry = (JarEntry) e.nextElement();
-
-        if (entry == null) {
           continue;
         }
 
-        String name = entry.getName();
-
-        if (!name.endsWith(".class")) {
-          /* only use class file*/
+        if (!isJarFile(file)) {
           continue;
         }
 
-        classes.add(name);
+        JarFile jf = new JarFile(file);
+
+        for (Enumeration e = jf.entries(); e.hasMoreElements();) {
+          JarEntry entry = (JarEntry) e.nextElement();
+
+          if (entry == null) {
+            continue;
+          }
+
+          String name = entry.getName();
+
+          if (isClazzFile(name)) {
+            /* only use class file */
+            classes.add(name);
+          } else if (isJarFile(name)) {
+            classes.addAll(getClassNamesFromJar(name));
+          } else {
+            continue;
+          }
+        }
+      } catch (IOException e) {
+        throw new IOException(String.format("Error reading classpath entry: %s", url), e);
       }
     }
 
@@ -151,8 +168,7 @@ public class ClassNameCompleter extends StringsCompleter {
 
     for (Iterator i = classes.iterator(); i.hasNext(); ) {
       String name = (String) i.next();
-      classNames.add(name.replace('/', '.').
-              substring(0, name.length() - 6));
+      classNames.add(name.replace('/', '.').substring(0, name.length() - 6));
     }
 
     return (String[]) classNames.toArray(new String[classNames.size()]);
@@ -173,12 +189,66 @@ public class ClassNameCompleter extends StringsCompleter {
         continue;
       } else if (files[i].isDirectory()) {
         getClassFiles(root, holder, files[i], maxDirectories);
-      } else if (files[i].getName().endsWith(".class")) {
+      } else if (files[i].getName().endsWith(clazzFileNameExtension)) {
         holder.add(files[i].getAbsolutePath().
                 substring(root.length() + 1));
       }
     }
 
     return holder;
+  }
+
+  /**
+   * Get clazz names from a jar file path
+   * @param path specifies the jar file's path
+   * @return
+   */
+  private static List<String> getClassNamesFromJar(String path) {
+    List<String> classNames = new ArrayList<String>();
+    ZipInputStream zip = null;
+    try {
+      zip = new ZipInputStream(new FileInputStream(path));
+      ZipEntry entry = zip.getNextEntry();
+      while (entry != null) {
+        if (!entry.isDirectory() && entry.getName().endsWith(clazzFileNameExtension)) {
+          StringBuilder className = new StringBuilder();
+          for (String part : entry.getName().split("/")) {
+            if (className.length() != 0) {
+              className.append(".");
+            }
+            className.append(part);
+            if (part.endsWith(clazzFileNameExtension)) {
+              className.setLength(className.length() - clazzFileNameExtension.length());
+            }
+          }
+          classNames.add(className.toString());
+        }
+        entry = zip.getNextEntry();
+      }
+    } catch (IOException e) {
+      LOG.error("Fail to parse the class name from the Jar file due to the exception:" + e);
+    } finally {
+      if (zip != null) {
+        try {
+          zip.close();
+        } catch (IOException e) {
+          LOG.error("Fail to close the file due to the exception:" + e);
+        }
+      }
+    }
+
+    return classNames;
+  }
+
+  private static boolean isJarFile(File file) {
+    return (file != null && file.isFile() && isJarFile(file.getName()));
+  }
+
+  private static boolean isJarFile(String fileName) {
+    return fileName.endsWith(jarFileNameExtension);
+  }
+
+  private static boolean isClazzFile(String clazzName) {
+    return clazzName.endsWith(clazzFileNameExtension);
   }
 }

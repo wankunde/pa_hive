@@ -20,21 +20,24 @@ package org.apache.hadoop.hive.ql.udf.ptf;
 
 import java.util.AbstractList;
 import java.util.ArrayList;
-import java.util.Date;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.lang.ArrayUtils;
-import org.apache.hadoop.conf.Configuration;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.common.type.HiveDecimal;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.ql.exec.FunctionRegistry;
 import org.apache.hadoop.hive.ql.exec.PTFOperator;
 import org.apache.hadoop.hive.ql.exec.PTFPartition;
+import org.apache.hadoop.hive.ql.exec.WindowFunctionInfo;
 import org.apache.hadoop.hive.ql.exec.PTFPartition.PTFPartitionIterator;
 import org.apache.hadoop.hive.ql.exec.PTFRollingPartition;
-import org.apache.hadoop.hive.ql.exec.WindowFunctionInfo;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.parse.PTFInvocationSpec.Order;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
@@ -61,10 +64,42 @@ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectIn
 
 @SuppressWarnings("deprecation")
 public class WindowingTableFunction extends TableFunctionEvaluator {
+  public static final Log LOG =LogFactory.getLog(WindowingTableFunction.class.getName());
+  static class WindowingFunctionInfoHelper {
+    private boolean supportsWindow;
+
+    WindowingFunctionInfoHelper() {
+    }
+
+    public WindowingFunctionInfoHelper(boolean supportsWindow) {
+      this.supportsWindow = supportsWindow;
+    }
+
+    public boolean isSupportsWindow() {
+      return supportsWindow;
+    }
+    public void setSupportsWindow(boolean supportsWindow) {
+      this.supportsWindow = supportsWindow;
+    }
+  }
 
   StreamingState streamingState;
   RankLimit rnkLimitDef;
+
+  // There is some information about the windowing functions that needs to be initialized
+  // during query compilation time, and made available to during the map/reduce tasks via
+  // plan serialization.
+  Map<String, WindowingFunctionInfoHelper> windowingFunctionHelpers = null;
   
+  public Map<String, WindowingFunctionInfoHelper> getWindowingFunctionHelpers() {
+    return windowingFunctionHelpers;
+  }
+
+  public void setWindowingFunctionHelpers(
+      Map<String, WindowingFunctionInfoHelper> windowingFunctionHelpers) {
+    this.windowingFunctionHelpers = windowingFunctionHelpers;
+  }
+
   @SuppressWarnings({ "unchecked", "rawtypes" })
   @Override
   public void execute(PTFPartitionIterator<Object> pItr, PTFPartition outP) throws HiveException {
@@ -148,9 +183,8 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
   private boolean streamingPossible(Configuration cfg, WindowFunctionDef wFnDef)
       throws HiveException {
     WindowFrameDef wdwFrame = wFnDef.getWindowFrame();
-    WindowFunctionInfo wFnInfo = FunctionRegistry.getWindowFunctionInfo(wFnDef
-        .getName());
 
+    WindowingFunctionInfoHelper wFnInfo = getWindowingFunctionInfoHelper(wFnDef.getName());
     if (!wFnInfo.isSupportsWindow()) {
       return true;
     }
@@ -212,8 +246,8 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
     }
 
     WindowTableFunctionDef tabDef = (WindowTableFunctionDef) getTableDef();
-    int startPos = Integer.MAX_VALUE;
-    int endPos = Integer.MIN_VALUE;
+    int precedingSpan = 0;
+    int followingSpan = 0;
 
     for (int i = 0; i < tabDef.getWindowFunctions().size(); i++) {
       WindowFunctionDef wFnDef = tabDef.getWindowFunctions().get(i);
@@ -230,9 +264,20 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
       BoundaryDef end = wdwFrame.getEnd();
       if (!(end instanceof ValueBoundaryDef)
           && !(start instanceof ValueBoundaryDef)) {
-        if (!end.isUnbounded() && !start.isUnbounded()) {
-          startPos = Math.min(startPos, wdwFrame.getStart().getRelativeOffset());
-          endPos = Math.max(endPos, wdwFrame.getEnd().getRelativeOffset());
+        if (end.getAmt() != BoundarySpec.UNBOUNDED_AMOUNT
+            && start.getAmt() != BoundarySpec.UNBOUNDED_AMOUNT
+            && end.getDirection() != Direction.PRECEDING
+            && start.getDirection() != Direction.FOLLOWING) {
+
+          int amt = wdwFrame.getStart().getAmt();
+          if (amt > precedingSpan) {
+            precedingSpan = amt;
+          }
+
+          amt = wdwFrame.getEnd().getAmt();
+          if (amt > followingSpan) {
+            followingSpan = amt;
+          }
           continue;
         }
       }
@@ -241,12 +286,51 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
     
     int windowLimit = HiveConf.getIntVar(cfg, ConfVars.HIVEJOINCACHESIZE);
 
-    if (windowLimit < (endPos - startPos + 1)) {
+    if (windowLimit < (followingSpan + precedingSpan + 1)) {
       return null;
     }
 
     canAcceptInputAsStream = true;
-    return new int[] {startPos, endPos};
+    return new int[] {precedingSpan, followingSpan};
+  }
+
+  private void initializeWindowingFunctionInfoHelpers() throws SemanticException {
+    // getWindowFunctionInfo() cannot be called during map/reduce tasks. So cache necessary
+    // values during query compilation, and rely on plan serialization to bring this info
+    // to the object during the map/reduce tasks.
+    if (windowingFunctionHelpers != null) {
+      return;
+    }
+
+    windowingFunctionHelpers = new HashMap<String, WindowingFunctionInfoHelper>();
+    WindowTableFunctionDef tabDef = (WindowTableFunctionDef) getTableDef();
+    for (int i = 0; i < tabDef.getWindowFunctions().size(); i++) {
+      WindowFunctionDef wFn = tabDef.getWindowFunctions().get(i);
+      GenericUDAFEvaluator fnEval = wFn.getWFnEval();
+      WindowFunctionInfo wFnInfo = FunctionRegistry.getWindowFunctionInfo(wFn.getName());
+      boolean supportsWindow = wFnInfo.isSupportsWindow();
+      windowingFunctionHelpers.put(wFn.getName(), new WindowingFunctionInfoHelper(supportsWindow));
+    }
+  }
+
+  @Override
+  protected void setOutputOI(StructObjectInspector outputOI) {
+    super.setOutputOI(outputOI);
+    // Call here because at this point the WindowTableFunctionDef has been set
+    try {
+      initializeWindowingFunctionInfoHelpers();
+    } catch (SemanticException err) {
+      throw new RuntimeException("Unexpected error while setting up windowing function", err);
+    }
+  }
+
+  private WindowingFunctionInfoHelper getWindowingFunctionInfoHelper(String fnName) {
+    WindowingFunctionInfoHelper wFnInfoHelper = windowingFunctionHelpers.get(fnName);
+    if (wFnInfoHelper == null) {
+      // Should not happen
+      throw new RuntimeException("No cached WindowingFunctionInfoHelper for " + fnName);
+    }
+    return wFnInfoHelper;
   }
 
   @Override
@@ -344,7 +428,7 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
                   : out);
         }
       } else {
-        int rowToProcess = streamingState.rollingPart.rowToProcess(wFn.getWindowFrame());
+        int rowToProcess = streamingState.rollingPart.rowToProcess(wFn);
         if (rowToProcess >= 0) {
           Range rng = getRange(wFn, rowToProcess, streamingState.rollingPart,
               streamingState.order);
@@ -398,12 +482,11 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
       WindowFunctionDef wFn = tabDef.getWindowFunctions().get(i);
       GenericUDAFEvaluator fnEval = wFn.getWFnEval();
 
-      int numRowsRemaining = wFn.getWindowFrame().getEnd().getRelativeOffset();
+      int numRowsRemaining = wFn.getWindowFrame().getEnd().getAmt();
       if (fnEval instanceof ISupportStreamingModeForWindowing) {
         fnEval.terminate(streamingState.aggBuffers[i]);
 
-        WindowFunctionInfo wFnInfo = FunctionRegistry.getWindowFunctionInfo(wFn
-            .getName());
+        WindowingFunctionInfoHelper wFnInfo = getWindowingFunctionInfoHelper(wFn.getName());
         if (!wFnInfo.isSupportsWindow()) {
           numRowsRemaining = ((ISupportStreamingModeForWindowing) fnEval)
               .getRowsRemainingAfterTerminate();
@@ -599,7 +682,7 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
     return vals;
   }
 
-  private Range getRange(WindowFunctionDef wFnDef, int currRow, PTFPartition p, Order order) throws HiveException
+  Range getRange(WindowFunctionDef wFnDef, int currRow, PTFPartition p, Order order) throws HiveException
   {
     BoundaryDef startB = wFnDef.getWindowFrame().getStart();
     BoundaryDef endB = wFnDef.getWindowFrame().getEnd();
@@ -633,7 +716,7 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
     return new Range(start, end, p);
   }
 
-  private int getRowBoundaryStart(BoundaryDef b, int currRow) throws HiveException {
+  int getRowBoundaryStart(BoundaryDef b, int currRow) throws HiveException {
     Direction d = b.getDirection();
     int amt = b.getAmt();
     switch(d) {
@@ -652,7 +735,7 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
     throw new HiveException("Unknown Start Boundary Direction: " + d);
   }
 
-  private int getRowBoundaryEnd(BoundaryDef b, int currRow, PTFPartition p) throws HiveException {
+  int getRowBoundaryEnd(BoundaryDef b, int currRow, PTFPartition p) throws HiveException {
     Direction d = b.getDirection();
     int amt = b.getAmt();
     switch(d) {
@@ -660,7 +743,7 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
       if ( amt == 0 ) {
         return currRow + 1;
       }
-      return currRow - amt + 1;
+      return currRow - amt;
     case CURRENT:
       return currRow + 1;
     case FOLLOWING:
@@ -1069,8 +1152,6 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
         return new DoubleValueBoundaryScanner(vbDef, order, vbDef.getExpressionDef());
       case DECIMAL:
         return new HiveDecimalValueBoundaryScanner(vbDef, order, vbDef.getExpressionDef());
-      case DATE:
-        return new DateValueBoundaryScanner(vbDef, order, vbDef.getExpressionDef());
       case STRING:
         return new StringValueBoundaryScanner(vbDef, order, vbDef.getExpressionDef());
       }
@@ -1088,28 +1169,20 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
 
     @Override
     public boolean isGreater(Object v1, Object v2, int amt) {
-      if (v1 != null && v2 != null) {
-        long l1 = PrimitiveObjectInspectorUtils.getLong(v1,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        long l2 = PrimitiveObjectInspectorUtils.getLong(v2,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        return (l1 -l2) > amt;
-      }
-
-      return v1 != null || v2 != null; // True if only one value is null
+      long l1 = PrimitiveObjectInspectorUtils.getLong(v1,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      long l2 = PrimitiveObjectInspectorUtils.getLong(v2,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      return (l1 -l2) > amt;
     }
 
     @Override
     public boolean isEqual(Object v1, Object v2) {
-      if (v1 != null && v2 != null) {
-        long l1 = PrimitiveObjectInspectorUtils.getLong(v1,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        long l2 = PrimitiveObjectInspectorUtils.getLong(v2,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        return l1 == l2;
-      }
-
-      return v1 == null && v2 == null; // True if both are null
+      long l1 = PrimitiveObjectInspectorUtils.getLong(v1,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      long l2 = PrimitiveObjectInspectorUtils.getLong(v2,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      return l1 == l2;
     }
   }
 
@@ -1121,28 +1194,20 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
 
     @Override
     public boolean isGreater(Object v1, Object v2, int amt) {
-      if (v1 != null && v2 != null) {
-        double d1 = PrimitiveObjectInspectorUtils.getDouble(v1,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        double d2 = PrimitiveObjectInspectorUtils.getDouble(v2,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        return (d1 -d2) > amt;
-      }
-
-      return v1 != null || v2 != null; // True if only one value is null
+      double d1 = PrimitiveObjectInspectorUtils.getDouble(v1,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      double d2 = PrimitiveObjectInspectorUtils.getDouble(v2,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      return (d1 -d2) > amt;
     }
 
     @Override
     public boolean isEqual(Object v1, Object v2) {
-      if (v1 != null && v2 != null) {
-        double d1 = PrimitiveObjectInspectorUtils.getDouble(v1,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        double d2 = PrimitiveObjectInspectorUtils.getDouble(v2,
-            (PrimitiveObjectInspector) expressionDef.getOI());
-        return d1 == d2;
-      }
-
-      return v1 == null && v2 == null; // True if both are null
+      double d1 = PrimitiveObjectInspectorUtils.getDouble(v1,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      double d2 = PrimitiveObjectInspectorUtils.getDouble(v2,
+          (PrimitiveObjectInspector) expressionDef.getOI());
+      return d1 == d2;
     }
   }
 
@@ -1177,34 +1242,6 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
     }
   }
 
-  public static class DateValueBoundaryScanner extends ValueBoundaryScanner {
-    public DateValueBoundaryScanner(BoundaryDef bndDef, Order order,
-        PTFExpressionDef expressionDef) {
-      super(bndDef,order,expressionDef);
-    }
-
-    @Override
-    public boolean isGreater(Object v1, Object v2, int amt) {
-      Date l1 = PrimitiveObjectInspectorUtils.getDate(v1,
-          (PrimitiveObjectInspector) expressionDef.getOI());
-      Date l2 = PrimitiveObjectInspectorUtils.getDate(v2,
-          (PrimitiveObjectInspector) expressionDef.getOI());
-      if (l1 != null && l2 != null) {
-          return (double)(l1.getTime() - l2.getTime())/1000 > (long)amt * 24 * 3600; // Converts amt days to milliseconds
-      }
-      return l1 != l2; // True if only one date is null
-    }
-
-    @Override
-    public boolean isEqual(Object v1, Object v2) {
-      Date l1 = PrimitiveObjectInspectorUtils.getDate(v1,
-          (PrimitiveObjectInspector) expressionDef.getOI());
-      Date l2 = PrimitiveObjectInspectorUtils.getDate(v2,
-          (PrimitiveObjectInspector) expressionDef.getOI());
-      return (l1 == null && l2 == null) || (l1 != null && l1.equals(l2));
-    }
-  }
-
   public static class StringValueBoundaryScanner extends ValueBoundaryScanner {
     public StringValueBoundaryScanner(BoundaryDef bndDef, Order order,
         PTFExpressionDef expressionDef) {
@@ -1226,7 +1263,7 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
           (PrimitiveObjectInspector) expressionDef.getOI());
       String s2 = PrimitiveObjectInspectorUtils.getString(v2,
           (PrimitiveObjectInspector) expressionDef.getOI());
-      return (s1 == null && s2 == null) || s1.equals(s2);
+      return (s1 == null && s2 == null) || (s1 != null && s1.equals(s2));
     }
   }
 
@@ -1431,7 +1468,7 @@ public class WindowingTableFunction extends TableFunctionEvaluator {
       return true;
     }
 
-    private List<Object> nextOutputRow() throws HiveException {
+    List<Object> nextOutputRow() throws HiveException {
       List<Object> oRow = new ArrayList<Object>();
       Object iRow = rollingPart.nextOutputRow();
       int i = 0;

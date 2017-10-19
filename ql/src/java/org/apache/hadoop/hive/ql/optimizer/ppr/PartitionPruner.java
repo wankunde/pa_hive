@@ -53,7 +53,6 @@ import org.apache.hadoop.hive.ql.plan.ExprNodeColumnDesc;
 import org.apache.hadoop.hive.ql.plan.ExprNodeConstantDesc;
 import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
 import org.apache.hadoop.hive.ql.plan.ExprNodeGenericFuncDesc;
-import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDF;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPAnd;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDFOPOr;
@@ -120,7 +119,7 @@ public class PartitionPruner implements Transform {
       return false;
     }
 
-    // All columns of the expression must be parttioned columns
+    // All columns of the expression must be partitioned columns
     List<ExprNodeDesc> children = expr.getChildren();
     if (children != null) {
       for (int i = 0; i < children.size(); i++) {
@@ -159,16 +158,18 @@ public class PartitionPruner implements Transform {
    *          cached result for the table
    * @return the partition list for the table that satisfies the partition
    *         pruner condition.
-   * @throws HiveException
+   * @throws SemanticException
    */
   public static PrunedPartitionList prune(Table tab, ExprNodeDesc prunerExpr,
       HiveConf conf, String alias, Map<String, PrunedPartitionList> prunedPartitionsMap)
           throws SemanticException {
 
-    LOG.trace("Started pruning partiton");
-    LOG.trace("dbname = " + tab.getDbName());
-    LOG.trace("tabname = " + tab.getTableName());
-    LOG.trace("prune Expression = " + prunerExpr == null ? "" : prunerExpr);
+    if (LOG.isTraceEnabled()) {
+      LOG.trace("Started pruning partiton");
+      LOG.trace("dbname = " + tab.getDbName());
+      LOG.trace("tabname = " + tab.getTableName());
+      LOG.trace("prune Expression = " + (prunerExpr == null ? "" : prunerExpr));
+    }
 
     String key = tab.getDbName() + "." + tab.getTableName() + ";";
 
@@ -203,8 +204,10 @@ public class PartitionPruner implements Transform {
       // For null and true values, return every partition
       return getAllPartsFromCacheOrServer(tab, key, true, prunedPartitionsMap);
     }
-    LOG.debug("Filter w/ compacting: " + compactExpr.getExprString()
-        + "; filter w/o compacting: " + oldFilter);
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Filter w/ compacting: " + compactExpr.getExprString()
+          + "; filter w/o compacting: " + oldFilter);
+    }
 
     key = key + compactExpr.getExprString();
     PrunedPartitionList ppList = prunedPartitionsMap.get(key);
@@ -368,7 +371,7 @@ public class PartitionPruner implements Transform {
       // Now filter.
       List<Partition> partitions = new ArrayList<Partition>();
       boolean hasUnknownPartitions = false;
-      PerfLogger perfLogger = SessionState.getPerfLogger();
+      PerfLogger perfLogger = PerfLogger.getPerfLogger();
       if (!doEvalClientSide) {
         perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PARTITION_RETRIEVING);
         try {
@@ -400,7 +403,7 @@ public class PartitionPruner implements Transform {
   }
 
   private static Set<Partition> getAllPartitions(Table tab) throws HiveException {
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PARTITION_RETRIEVING);
     Set<Partition> result = Hive.get().getAllPartitionsOf(tab);
     perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.PARTITION_RETRIEVING);
@@ -418,7 +421,7 @@ public class PartitionPruner implements Transform {
    */
   static private boolean pruneBySequentialScan(Table tab, List<Partition> partitions,
       ExprNodeGenericFuncDesc prunerExpr, HiveConf conf) throws HiveException, MetaException {
-    PerfLogger perfLogger = SessionState.getPerfLogger();
+    PerfLogger perfLogger = PerfLogger.getPerfLogger();
     perfLogger.PerfLogBegin(CLASS_NAME, PerfLogger.PRUNE_LISTING);
 
     List<String> partNames = Hive.get().getPartitionNames(
@@ -510,12 +513,16 @@ public class PartitionPruner implements Transform {
       if (isUnknown && values.contains(defaultPartitionName)) {
         // Reject default partitions if we couldn't determine whether we should include it or not.
         // Note that predicate would only contains partition column parts of original predicate.
-        LOG.debug("skipping default/bad partition: " + partName);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("skipping default/bad partition: " + partName);
+        }
         partIter.remove();
         continue;
       }
       hasUnknownPartitions |= isUnknown;
-      LOG.debug("retained " + (isUnknown ? "unknown " : "") + "partition: " + partName);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("retained " + (isUnknown ? "unknown " : "") + "partition: " + partName);
+      }
     }
     if (!inPlace) {
       partNames.clear();

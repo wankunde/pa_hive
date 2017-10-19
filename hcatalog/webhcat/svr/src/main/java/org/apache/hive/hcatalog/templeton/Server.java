@@ -635,6 +635,7 @@ public class Server {
   @Path("mapreduce/streaming")
   @Produces({MediaType.APPLICATION_JSON})
   public EnqueueBean mapReduceStreaming(@FormParam("input") List<String> inputs,
+		      @FormParam("inputreader") String inputreader,
                       @FormParam("output") String output,
                       @FormParam("mapper") String mapper,
                       @FormParam("reducer") String reducer,
@@ -646,7 +647,8 @@ public class Server {
                       @FormParam("arg") List<String> args,
                       @FormParam("statusdir") String statusdir,
                       @FormParam("callback") String callback,
-                      @FormParam("enablelog") boolean enablelog)
+                      @FormParam("enablelog") boolean enablelog,
+                      @FormParam("enablejobreconnect") Boolean enablejobreconnect)
     throws NotAuthorizedException, BusyException, BadParam, QueueException,
     ExecuteException, IOException, InterruptedException {
     verifyUser();
@@ -657,6 +659,7 @@ public class Server {
     Map<String, Object> userArgs = new HashMap<String, Object>();
     userArgs.put("user.name", getDoAsUser());
     userArgs.put("input", inputs);
+    userArgs.put("inputreader", inputreader);
     userArgs.put("output", output);
     userArgs.put("mapper", mapper);
     userArgs.put("reducer", reducer);
@@ -669,12 +672,13 @@ public class Server {
     userArgs.put("statusdir", statusdir);
     userArgs.put("callback", callback);
     userArgs.put("enablelog", Boolean.toString(enablelog));
+    userArgs.put("enablejobreconnect", enablejobreconnect);
     checkEnableLogPrerequisite(enablelog, statusdir);
 
     StreamingDelegator d = new StreamingDelegator(appConf);
-    return d.run(getDoAsUser(), userArgs, inputs, output, mapper, reducer, combiner,
+    return d.run(getDoAsUser(), userArgs, inputs, inputreader, output, mapper, reducer, combiner,
       fileList, files, defines, cmdenvs, args,
-      statusdir, callback, getCompletedUrl(), enablelog, JobType.STREAMING);
+      statusdir, callback, getCompletedUrl(), enablelog, enablejobreconnect, JobType.STREAMING);
   }
 
   /**
@@ -697,7 +701,8 @@ public class Server {
                   @FormParam("statusdir") String statusdir,
                   @FormParam("callback") String callback,
                   @FormParam("usehcatalog") boolean usesHcatalog,
-                  @FormParam("enablelog") boolean enablelog)
+                  @FormParam("enablelog") boolean enablelog,
+                  @FormParam("enablejobreconnect") Boolean enablejobreconnect)
     throws NotAuthorizedException, BusyException, BadParam, QueueException,
     ExecuteException, IOException, InterruptedException {
     verifyUser();
@@ -715,6 +720,7 @@ public class Server {
     userArgs.put("statusdir", statusdir);
     userArgs.put("callback", callback);
     userArgs.put("enablelog", Boolean.toString(enablelog));
+    userArgs.put("enablejobreconnect", enablejobreconnect);
 
     checkEnableLogPrerequisite(enablelog, statusdir);
 
@@ -722,7 +728,7 @@ public class Server {
     return d.run(getDoAsUser(), userArgs,
       jar, mainClass,
       libjars, files, args, defines,
-      statusdir, callback, usesHcatalog, getCompletedUrl(), enablelog, JobType.JAR);
+      statusdir, callback, usesHcatalog, getCompletedUrl(), enablelog, enablejobreconnect, JobType.JAR);
   }
 
   /**
@@ -745,7 +751,8 @@ public class Server {
                @FormParam("statusdir") String statusdir,
                @FormParam("callback") String callback,
                @FormParam("usehcatalog") boolean usesHcatalog,
-               @FormParam("enablelog") boolean enablelog)
+               @FormParam("enablelog") boolean enablelog,
+               @FormParam("enablejobreconnect") Boolean enablejobreconnect)
     throws NotAuthorizedException, BusyException, BadParam, QueueException,
     ExecuteException, IOException, InterruptedException {
     verifyUser();
@@ -763,6 +770,7 @@ public class Server {
     userArgs.put("statusdir", statusdir);
     userArgs.put("callback", callback);
     userArgs.put("enablelog", Boolean.toString(enablelog));
+    userArgs.put("enablejobreconnect", enablejobreconnect);
 
     checkEnableLogPrerequisite(enablelog, statusdir);
 
@@ -770,7 +778,7 @@ public class Server {
     return d.run(getDoAsUser(), userArgs,
       execute, srcFile,
       pigArgs, otherFiles,
-      statusdir, callback, usesHcatalog, getCompletedUrl(), enablelog);
+      statusdir, callback, usesHcatalog, getCompletedUrl(), enablelog, enablejobreconnect);
   }
 
    /**
@@ -782,6 +790,8 @@ public class Server {
    * @param statusdir    where the stderr/stdout of templeton controller job goes
    * @param callback     URL which WebHCat will call when the sqoop job finishes
    * @param enablelog    whether to collect mapreduce log into statusdir/logs
+   * @param enablejobreconnect    whether to reconnect to a running child job on templeton
+   *                              controller job retry
    */
   @POST
   @Path("sqoop")
@@ -792,7 +802,8 @@ public class Server {
               @FormParam("files") String otherFiles,
               @FormParam("statusdir") String statusdir,
               @FormParam("callback") String callback,
-              @FormParam("enablelog") boolean enablelog)
+              @FormParam("enablelog") boolean enablelog,
+              @FormParam("enablejobreconnect") Boolean enablejobreconnect)
     throws NotAuthorizedException, BusyException, BadParam, QueueException,
     IOException, InterruptedException {
     verifyUser();
@@ -812,9 +823,10 @@ public class Server {
     userArgs.put("statusdir", statusdir);
     userArgs.put("callback", callback);
     userArgs.put("enablelog", Boolean.toString(enablelog));
+    userArgs.put("enablejobreconnect", enablejobreconnect);
     SqoopDelegator d = new SqoopDelegator(appConf);
     return d.run(getDoAsUser(), userArgs, command, optionsFile, otherFiles,
-      statusdir, callback, getCompletedUrl(), enablelog, libdir);
+      statusdir, callback, getCompletedUrl(), enablelog, enablejobreconnect, libdir);
   }
 
   /**
@@ -831,6 +843,8 @@ public class Server {
    * @param statusdir  where the stderr/stdout of templeton controller job goes
    * @param callback   URL which WebHCat will call when the hive job finishes
    * @param enablelog  whether to collect mapreduce log into statusdir/logs
+   * @param enablejobreconnect    whether to reconnect to a running child job on templeton
+   *                              controller job retry
    */
   @POST
   @Path("hive")
@@ -842,7 +856,8 @@ public class Server {
               @FormParam("define") List<String> defines,
               @FormParam("statusdir") String statusdir,
               @FormParam("callback") String callback,
-              @FormParam("enablelog") boolean enablelog)
+              @FormParam("enablelog") boolean enablelog,
+              @FormParam("enablejobreconnect") Boolean enablejobreconnect)
     throws NotAuthorizedException, BusyException, BadParam, QueueException,
     ExecuteException, IOException, InterruptedException {
     verifyUser();
@@ -860,12 +875,13 @@ public class Server {
     userArgs.put("statusdir", statusdir);
     userArgs.put("callback", callback);
     userArgs.put("enablelog", Boolean.toString(enablelog));
+    userArgs.put("enablejobreconnect", enablejobreconnect);
 
     checkEnableLogPrerequisite(enablelog, statusdir);
 
     HiveDelegator d = new HiveDelegator(appConf);
     return d.run(getDoAsUser(), userArgs, execute, srcFile, defines, hiveArgs, otherFiles,
-      statusdir, callback, getCompletedUrl(), enablelog);
+      statusdir, callback, getCompletedUrl(), enablelog, enablejobreconnect);
   }
 
   /**

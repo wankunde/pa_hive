@@ -15,14 +15,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>com.cloudera.cdh</groupId>
-    <artifactId>cdh-root</artifactId>
-    <version>5.5.1</version>
+    <groupId>org.apache</groupId>
+    <artifactId>apache</artifactId>
+    <version>14</version>
   </parent>
-
   <groupId>org.apache.hive</groupId>
   <artifactId>hive</artifactId>
-  <version>1.1.0-cdh5.5.1</version>
+  <version>1.2.2</version>
   <packaging>pom</packaging>
 
   <name>Hive</name>
@@ -54,8 +53,7 @@
   </modules>
 
   <properties>
-    <cdh.hive.version>1.1.0-cdh5.5.1</cdh.hive.version>
-    <hive.version.shortname>1.1.0</hive.version.shortname>
+    <hive.version.shortname>1.2.0</hive.version.shortname>
 
     <!-- Build Properties -->
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -76,6 +74,7 @@
 
     <!-- To add additional exclude patterns set this property -->
     <test.excludes.additional></test.excludes.additional>
+    <skip.spark.files></skip.spark.files>
 
     <!-- Plugin and Plugin Dependency Versions -->
     <ant.contrib.version>1.0b3</ant.contrib.version>
@@ -100,14 +99,12 @@
     <activemq.version>5.5.0</activemq.version>
     <ant.version>1.9.1</ant.version>
     <antlr.version>3.4</antlr.version>
-    <avro.version>${cdh.avro.version}</avro.version>
+    <avro.version>1.7.5</avro.version>
     <bonecp.version>0.8.0.RELEASE</bonecp.version>
-    <calcite.version>1.0.0-incubating</calcite.version>
+    <calcite.version>1.2.0-incubating</calcite.version>
     <datanucleus-api-jdo.version>3.2.6</datanucleus-api-jdo.version>
     <datanucleus-core.version>3.2.10</datanucleus-core.version>
     <datanucleus-rdbms.version>3.2.9</datanucleus-rdbms.version>
-    <checkstyle.version>5.0</checkstyle.version>
-    <findbugs.version>1.3.9</findbugs.version>
     <commons-cli.version>1.2</commons-cli.version>
     <commons-codec.version>1.4</commons-codec.version>
     <commons-collections.version>3.2.2</commons-collections.version>
@@ -120,22 +117,19 @@
     <commons-logging.version>1.1.3</commons-logging.version>
     <commons-pool.version>1.5.4</commons-pool.version>
     <commons-dbcp.version>1.4</commons-dbcp.version>
-    <derby.version>10.11.1.1</derby.version>
-    <metrics-core.version>${cdh.metrics-core.version}</metrics-core.version>
+    <derby.version>10.10.2.0</derby.version>
     <guava.version>14.0.1</guava.version>
-    <groovy.version>2.4.4</groovy.version>
-    <hadoop-20S.version>${cdh.mr1.version}</hadoop-20S.version>
-    <hadoop-23.version>${cdh.hadoop.version}</hadoop-23.version>
+    <groovy.version>2.1.6</groovy.version>
+    <hadoop-20S.version>1.2.1</hadoop-20S.version>
+    <hadoop-23.version>2.6.0-cdh5.5.1</hadoop-23.version>
     <hadoop.bin.path>${basedir}/${hive.path.to.root}/testutils/hadoop</hadoop.bin.path>
-    <hbase.hadoop1.version>${cdh.hbase.version}</hbase.hadoop1.version>
-    <hbase.hadoop2.version>${cdh.hbase.version}</hbase.hadoop2.version>
-    <high-scale-lib.version>1.1.1</high-scale-lib.version>
+    <hbase.hadoop1.version>0.98.9-hadoop1</hbase.hadoop1.version>
+    <hbase.hadoop2.version>0.98.9-hadoop2</hbase.hadoop2.version>
     <!-- httpcomponents are not always in version sync -->
-    <httpcomponents.client.version>${cdh.httpcomponents.version}</httpcomponents.client.version>
-    <httpcomponents.core.version>${cdh.httpcomponents.core.version}</httpcomponents.core.version>
+    <httpcomponents.client.version>4.4</httpcomponents.client.version>
+    <httpcomponents.core.version>4.4</httpcomponents.core.version>
+    <ivy.version>2.4.0</ivy.version>
     <jackson.version>1.9.2</jackson.version>
-    <!-- jackson 1 and 2 lines can coexist without issue, as they have different artifactIds -->
-    <jackson.new.version>2.2.2</jackson.new.version>
     <javaewah.version>0.3.2</javaewah.version>
     <javolution.version>5.5.1</javolution.version>
     <jdo-api.version>3.0.1</jdo-api.version>
@@ -143,27 +137,28 @@
     <jersey.version>1.14</jersey.version>
     <jline.version>2.12</jline.version>
     <jms.version>1.1</jms.version>
+    <joda.version>2.5</joda.version>
     <jodd.version>3.5.2</jodd.version>
     <json.version>20090211</json.version>
     <junit.version>4.11</junit.version>
     <kryo.version>2.22</kryo.version>
-    <libfb303.version>${cdh.thrift.version}</libfb303.version>
-    <libthrift.version>${cdh.thrift.version}</libthrift.version>
+    <libfb303.version>0.9.2</libfb303.version>
+    <libthrift.version>0.9.2</libthrift.version>
     <log4j.version>1.2.16</log4j.version>
     <log4j-extras.version>1.2.17</log4j-extras.version>
     <opencsv.version>2.3</opencsv.version>
     <mockito-all.version>1.9.5</mockito-all.version>
     <mina.version>2.0.0-M5</mina.version>
     <netty.version>4.0.23.Final</netty.version>
-    <parquet.version>${cdh.parquet.version}</parquet.version>
-    <pig.version>${cdh.pig.version}</pig.version>
-    <protobuf.version>${cdh.protobuf.version}</protobuf.version>
+    <parquet.version>1.6.0</parquet.version>
+    <pig.version>0.12.0</pig.version>
+    <protobuf.version>2.5.0</protobuf.version>
     <stax.version>1.0.1</stax.version>
-    <slf4j.version>${cdh.slf4j.version}</slf4j.version>
+    <slf4j.version>1.7.5</slf4j.version>
     <ST4.version>4.0.4</ST4.version>
     <tez.version>0.7.1</tez.version>
     <super-csv.version>2.2.0</super-csv.version>
-    <spark.version>${cdh.spark.version}</spark.version>
+    <spark.version>1.3.1</spark.version>
     <scala.binary.version>2.10</scala.binary.version>
     <scala.version>2.10.4</scala.version>
     <tempus-fugit.version>1.1</tempus-fugit.version>
@@ -171,36 +166,22 @@
     <wadl-resourcedoc-doclet.version>1.4</wadl-resourcedoc-doclet.version>
     <velocity.version>1.5</velocity.version>
     <xerces.version>2.9.1</xerces.version>
-    <zookeeper.version>${cdh.zookeeper.version}</zookeeper.version>
+    <zookeeper.version>3.4.6</zookeeper.version>
     <jpam.version>1.1</jpam.version>
     <felix.version>2.4.0</felix.version>
     <curator.version>2.6.0</curator.version>
     <jsr305.version>3.0.0</jsr305.version>
-    <gson.version>2.2.4</gson.version>
   </properties>
 
   <repositories>
    <!-- This needs to be removed before checking in-->
     <repository>
-      <id>cdh.releases.repo</id>
-      <url>https://repository.cloudera.com/content/groups/cdh-releases-rcs</url>
-      <name>CDH Releases Repository</name>
-      <snapshots>
-        <enabled>false</enabled>
-      </snapshots>
-    </repository>
-    <repository>
-      <id>cdh.snapshots.repo</id>
-      <url>https://repository.cloudera.com/content/repositories/snapshots</url>
-      <name>CDH Snapshots Repository</name>
-      <snapshots>
-        <enabled>true</enabled>
-      </snapshots>
-    </repository>
-    <repository>
-      <id>datanucleus</id>
+      <!--id>datanucleus</id>
       <name>datanucleus maven repository</name>
-      <url>http://www.datanucleus.org/downloads/maven2</url>
+      <url>http://www.datanucleus.org/downloads/maven2</url-->
+	  <id>cloudera</id>
+	  <name>cloudera maven repository</name>
+	  <url>https://repository.cloudera.com/artifactory/cloudera-repos/</url>
       <layout>default</layout>
       <releases>
         <enabled>true</enabled>
@@ -282,11 +263,6 @@
         <version>${parquet.version}</version>
       </dependency>
       <dependency>
-        <groupId>commons-collections</groupId>
-        <artifactId>commons-collections</artifactId>
-        <version>${commons-collections.version}</version>
-      </dependency>
-      <dependency>
         <groupId>com.twitter</groupId>
         <artifactId>parquet-column</artifactId>
         <version>${parquet.version}</version>
@@ -326,6 +302,11 @@
         <groupId>commons-codec</groupId>
         <artifactId>commons-codec</artifactId>
         <version>${commons-codec.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>commons-collections</groupId>
+        <artifactId>commons-collections</artifactId>
+        <version>${commons-collections.version}</version>
       </dependency>
       <dependency>
         <groupId>commons-httpclient</groupId>
@@ -523,6 +504,11 @@
       <dependency>
         <groupId>org.apache.curator</groupId>
         <artifactId>curator-framework</artifactId>
+        <version>${curator.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.curator</groupId>
+        <artifactId>curator-recipes</artifactId>
         <version>${curator.version}</version>
       </dependency>
       <dependency>
@@ -849,8 +835,8 @@
             <exclude>**/ql/exec/vector/udf/legacy/*.java</exclude>
             <exclude>**/ql/exec/vector/udf/generic/*.java</exclude>
             <exclude>**/TestHiveServer2Concurrency.java</exclude>
-            <exclude>**/TestHiveMetaStore.java</exclude>
             <exclude>${test.excludes.additional}</exclude>
+            <exclude>${skip.spark.files}</exclude>
           </excludes>
           <redirectTestOutputToFile>true</redirectTestOutputToFile>
           <reuseForks>false</reuseForks>
@@ -918,6 +904,8 @@
 	    <exclude>bin/**</exclude>
 	    <exclude>itests/**</exclude>
 	    <exclude>docs/**</exclude>
+            <exclude>**/README.md</exclude>
+            <exclude>**/*.iml</exclude>
 	    <exclude>**/*.txt</exclude>
 	    <exclude>**/*.log</exclude>
 	    <exclude>**/*.arcconfig</exclude>
@@ -1088,7 +1076,7 @@
           </dependency>
           <dependency>
             <groupId>org.apache.hbase</groupId>
-            <artifactId>hbase-hadoop2-compat</artifactId>
+            <artifactId>hbase-hadoop1-compat</artifactId>
             <version>${hbase.hadoop1.version}</version>
           </dependency>
           <dependency>
@@ -1101,14 +1089,6 @@
     </profile>
     <profile>
       <id>hadoop-2</id>
-      <!-- Force all deps to include MRVersion class, see CDH-22186 -->
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-mapreduce-client-common</artifactId>
-          <version>${hadoop-23.version}</version>
-        </dependency>
-      </dependencies>
       <dependencyManagement>
         <dependencies>
           <dependency>
@@ -1120,6 +1100,16 @@
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-common</artifactId>
             <version>${hadoop-23.version}</version>
+            <exclusions>
+              <exclusion>
+                <groupId>org.apache.httpcomponents</groupId>
+                <artifactId>httpcore</artifactId>
+              </exclusion>
+              <exclusion>
+                <groupId>org.apache.httpcomponents</groupId>
+                <artifactId>httpclient</artifactId>
+              </exclusion>
+            </exclusions>
           </dependency>
           <dependency>
             <groupId>org.apache.hadoop</groupId>
@@ -1145,88 +1135,21 @@
             <groupId>org.apache.hbase</groupId>
             <artifactId>hbase-common</artifactId>
             <version>${hbase.hadoop2.version}</version>
-            <!-- hbase depends on hadoop-core which pollutes our classpath -->
-            <exclusions>
-              <exclusion>
-                <groupId>org.apache.hadoop</groupId>
-                <artifactId>hadoop-core</artifactId>
-              </exclusion>
-            </exclusions>
-          </dependency>
-          <dependency>
-            <groupId>org.apache.hbase</groupId>
-            <artifactId>hbase-common</artifactId>
-            <version>${hbase.hadoop2.version}</version>
-            <type>test-jar</type>
-            <!-- hbase depends on hadoop-core which pollutes our classpath -->
-            <exclusions>
-              <exclusion>
-                <groupId>org.apache.hadoop</groupId>
-                <artifactId>hadoop-core</artifactId>
-              </exclusion>
-            </exclusions>
           </dependency>
           <dependency>
             <groupId>org.apache.hbase</groupId>
             <artifactId>hbase-hadoop-compat</artifactId>
             <version>${hbase.hadoop2.version}</version>
-            <!-- hbase depends on hadoop-core which pollutes our classpath -->
-            <exclusions>
-              <exclusion>
-                <groupId>org.apache.hadoop</groupId>
-                <artifactId>hadoop-core</artifactId>
-              </exclusion>
-            </exclusions>
           </dependency>
           <dependency>
             <groupId>org.apache.hbase</groupId>
             <artifactId>hbase-hadoop2-compat</artifactId>
             <version>${hbase.hadoop2.version}</version>
-            <!-- hbase depends on hadoop-core which pollutes our classpath -->
-            <exclusions>
-              <exclusion>
-                <groupId>org.apache.hadoop</groupId>
-                <artifactId>hadoop-core</artifactId>
-              </exclusion>
-            </exclusions>
-          </dependency>
-          <dependency>
-            <groupId>org.apache.hbase</groupId>
-            <artifactId>hbase-hadoop2-compat</artifactId>
-            <version>${hbase.hadoop2.version}</version>
-            <type>test-jar</type>
-            <!-- hbase depends on hadoop-core which pollutes our classpath -->
-            <exclusions>
-              <exclusion>
-                <groupId>org.apache.hadoop</groupId>
-                <artifactId>hadoop-core</artifactId>
-              </exclusion>
-            </exclusions>
           </dependency>
           <dependency>
             <groupId>org.apache.hbase</groupId>
             <artifactId>hbase-server</artifactId>
             <version>${hbase.hadoop2.version}</version>
-            <!-- hbase depends on hadoop-core which pollutes our classpath -->
-            <exclusions>
-              <exclusion>
-                <groupId>org.apache.hadoop</groupId>
-                <artifactId>hadoop-core</artifactId>
-              </exclusion>
-            </exclusions>
-          </dependency>
-          <dependency>
-            <groupId>org.apache.hbase</groupId>
-            <artifactId>hbase-server</artifactId>
-            <version>${hbase.hadoop2.version}</version>
-            <type>test-jar</type>
-            <!-- hbase depends on hadoop-core which pollutes our classpath -->
-            <exclusions>
-              <exclusion>
-                <groupId>org.apache.hadoop</groupId>
-                <artifactId>hadoop-core</artifactId>
-              </exclusion>
-            </exclusions>
           </dependency>
           <dependency>
             <groupId>org.apache.hadoop</groupId>
@@ -1294,6 +1217,19 @@
         <test.hive.hadoop.classpath>${project.build.directory}/deplibs/*</test.hive.hadoop.classpath>
         <test.tmp.dir.uri>file:///${test.tmp.dir}</test.tmp.dir.uri>
         <test.log4j.scheme>file:/</test.log4j.scheme>
+      </properties>
+    </profile>
+    <profile>
+      <id>spark-test</id>
+      <activation>
+	<property>
+          <name>!skipSparkTests</name>
+	</property>
+      </activation>
+      <properties>
+        <skip.spark.files>
+          **/ql/exec/spark/session/TestSparkSessionManagerImpl.java,**/TestMultiSessionsHS2WithLocalClusterSpark.java,**/TestJdbcWithLocalClusterSpark.java
+        </skip.spark.files>
       </properties>
     </profile>
   </profiles>

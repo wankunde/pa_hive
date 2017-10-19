@@ -44,9 +44,18 @@ import org.apache.hadoop.hive.serde2.objectinspector.StructObjectInspector;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.SequenceFileInputFormat;
-import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hive.common.util.ReflectionUtil;
 
 public class JoinUtil {
+
+  /**
+   * Represents the join result between two tables
+   */
+  public static enum JoinResult {
+    MATCH,    // A match is found
+    NOMATCH,  // No match is found, and the current row will be dropped
+    SPILL     // The current row has been spilled to disk, as the join is postponed
+  }
 
   public static List<ObjectInspector>[] getObjectInspectorsFromEvaluators(
       List<ExprNodeEvaluator>[] exprEntries,
@@ -259,7 +268,7 @@ public class JoinUtil {
     if (desc == null) {
       return null;
     }
-    SerDe sd = (SerDe) ReflectionUtils.newInstance(desc.getDeserializerClass(),
+    SerDe sd = (SerDe) ReflectionUtil.newInstance(desc.getDeserializerClass(),
         null);
     try {
       SerDeUtils.initializeSerDe(sd, null, desc.getProperties(), null);

@@ -34,6 +34,8 @@ import org.apache.hadoop.hive.serde2.SerDeException;
 import org.apache.hadoop.hive.serde2.io.DateWritable;
 import org.apache.hadoop.hive.serde2.io.HiveCharWritable;
 import org.apache.hadoop.hive.serde2.io.HiveDecimalWritable;
+import org.apache.hadoop.hive.serde2.io.HiveIntervalDayTimeWritable;
+import org.apache.hadoop.hive.serde2.io.HiveIntervalYearMonthWritable;
 import org.apache.hadoop.hive.serde2.io.HiveVarcharWritable;
 import org.apache.hadoop.hive.serde2.io.TimestampWritable;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
@@ -47,6 +49,8 @@ import org.apache.hadoop.hive.serde2.objectinspector.primitive.DoubleObjectInspe
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.FloatObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveCharObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveDecimalObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveIntervalDayTimeObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveIntervalYearMonthObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.HiveVarcharObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.IntObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.JavaStringObjectInspector;
@@ -60,6 +64,8 @@ import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableDoubleObj
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableFloatObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableHiveCharObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableHiveDecimalObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableHiveIntervalDayTimeObjectInspector;
+import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableHiveIntervalYearMonthObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableHiveVarcharObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableIntObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.SettableLongObjectInspector;
@@ -542,6 +548,14 @@ public final class ObjectInspectorUtils {
         TimestampWritable t = ((TimestampObjectInspector) poi)
             .getPrimitiveWritableObject(o);
         return t.hashCode();
+      case INTERVAL_YEAR_MONTH:
+        HiveIntervalYearMonthWritable intervalYearMonth = ((HiveIntervalYearMonthObjectInspector) poi)
+            .getPrimitiveWritableObject(o);
+        return intervalYearMonth.hashCode();
+      case INTERVAL_DAY_TIME:
+        HiveIntervalDayTimeWritable intervalDayTime = ((HiveIntervalDayTimeObjectInspector) poi)
+            .getPrimitiveWritableObject(o);
+        return intervalDayTime.hashCode();
       case DECIMAL:
         return ((HiveDecimalObjectInspector) poi).getPrimitiveWritableObject(o).hashCode();
 
@@ -708,26 +722,12 @@ public final class ObjectInspectorUtils {
       case FLOAT: {
         float v1 = ((FloatObjectInspector) poi1).get(o1);
         float v2 = ((FloatObjectInspector) poi2).get(o2);
-
-        // The IEEE 754 floating point spec specifies that signed -0.0 and 0.0 should be treated as equal.
-        if (v1 == 0.0f && v2 == 0.0f) {
-          return 0;
-        } else {
-          // Float.compare() treats -0.0 and 0.0 as different
-          return Float.compare(v1, v2);
-        }
+        return Float.compare(v1, v2);
       }
       case DOUBLE: {
         double v1 = ((DoubleObjectInspector) poi1).get(o1);
         double v2 = ((DoubleObjectInspector) poi2).get(o2);
-
-        // The IEEE 754 floating point spec specifies that signed -0.0 and 0.0 should be treated as equal.
-        if (v1 == 0.0d && v2 == 0.0d) {
-          return 0;
-        } else {
-          // Double.compare() treats -0.0 and 0.0 as different
-          return Double.compare(v1, v2);
-        }
+        return Double.compare(v1, v2);
       }
       case STRING: {
         if (poi1.preferWritable() || poi2.preferWritable()) {
@@ -771,6 +771,20 @@ public final class ObjectInspectorUtils {
         TimestampWritable t2 = ((TimestampObjectInspector) poi2)
             .getPrimitiveWritableObject(o2);
         return t1.compareTo(t2);
+      }
+      case INTERVAL_YEAR_MONTH: {
+        HiveIntervalYearMonthWritable i1 = ((HiveIntervalYearMonthObjectInspector) poi1)
+            .getPrimitiveWritableObject(o1);
+        HiveIntervalYearMonthWritable i2 = ((HiveIntervalYearMonthObjectInspector) poi2)
+            .getPrimitiveWritableObject(o2);
+        return i1.compareTo(i2);
+      }
+      case INTERVAL_DAY_TIME: {
+        HiveIntervalDayTimeWritable i1 = ((HiveIntervalDayTimeObjectInspector) poi1)
+            .getPrimitiveWritableObject(o1);
+        HiveIntervalDayTimeWritable i2 = ((HiveIntervalDayTimeObjectInspector) poi2)
+            .getPrimitiveWritableObject(o2);
+        return i1.compareTo(i2);
       }
       case DECIMAL: {
         HiveDecimalWritable t1 = ((HiveDecimalObjectInspector) poi1)
@@ -1015,10 +1029,10 @@ public final class ObjectInspectorUtils {
 
   public static ConstantObjectInspector getConstantObjectInspector(ObjectInspector oi, Object value) {
     if (oi instanceof ConstantObjectInspector) {
-      return (ConstantObjectInspector) oi;  
+      return (ConstantObjectInspector) oi;
     }
     ObjectInspector writableOI = getStandardObjectInspector(oi, ObjectInspectorCopyOption.WRITABLE);
-    Object writableValue =
+    Object writableValue = value == null ? value :
       ObjectInspectorConverters.getConverter(oi, writableOI).convert(value);
     switch (writableOI.getCategory()) {
       case PRIMITIVE:
@@ -1106,6 +1120,10 @@ public final class ObjectInspectorUtils {
       return oi instanceof SettableDateObjectInspector;
     case TIMESTAMP:
       return oi instanceof SettableTimestampObjectInspector;
+    case INTERVAL_YEAR_MONTH:
+      return oi instanceof SettableHiveIntervalYearMonthObjectInspector;
+    case INTERVAL_DAY_TIME:
+      return oi instanceof SettableHiveIntervalDayTimeObjectInspector;
     case BINARY:
       return oi instanceof SettableBinaryObjectInspector;
     case DECIMAL:

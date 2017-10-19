@@ -49,6 +49,7 @@ import org.apache.hadoop.mapreduce.RecordWriter;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.TaskInputOutputContext;
 import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hive.hcatalog.common.HCatUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -157,7 +158,7 @@ public class MultiOutputFormat extends OutputFormat<Writable, Writable> {
     configsToMerge.put(ShimLoader.getHadoopShims().getHCatShim().getPropertyName(
         HadoopShims.HCatHadoopShims.PropertyName.CACHE_FILES), COMMA_DELIM);
     String fileSep;
-    if (org.apache.hadoop.mapred.MRVersion.isMR2()) {
+    if (HCatUtil.isHadoop23()) {
       fileSep = ",";
     } else {
       fileSep = System.getProperty("path.separator");
@@ -360,7 +361,7 @@ public class MultiOutputFormat extends OutputFormat<Writable, Writable> {
     public void addOutputFormat(String alias,
         Class<? extends OutputFormat> outputFormatClass,
         Class<?> keyClass, Class<?> valueClass) throws IOException {
-      Job copy = Job.getInstance(this.job.getConfiguration());
+      Job copy = new Job(this.job.getConfiguration());
       outputConfigs.put(alias, copy);
       copy.setOutputFormatClass(outputFormatClass);
       copy.setOutputKeyClass(keyClass);

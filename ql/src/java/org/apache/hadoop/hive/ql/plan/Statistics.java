@@ -22,6 +22,7 @@ import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.hadoop.hive.ql.plan.Explain.Level;
 import org.apache.hadoop.hive.ql.stats.StatsUtils;
 
 import com.google.common.collect.Lists;
@@ -101,7 +102,7 @@ public class Statistics implements Serializable {
   }
 
   @Override
-  @Explain(displayName = "Statistics")
+  @Explain(displayName = "Statistics", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
   public String toString() {
     StringBuilder sb = new StringBuilder();
     sb.append("Num rows: ");
@@ -175,7 +176,7 @@ public class Statistics implements Serializable {
         ColStatistics updatedCS = null;
         if (cs != null) {
 
-          String key = cs.getFullyQualifiedColName();
+          String key = cs.getColumnName();
           // if column statistics for a column is already found then merge the statistics
           if (columnStats.containsKey(key) && columnStats.get(key) != null) {
             updatedCS = columnStats.get(key);
@@ -229,13 +230,6 @@ public class Statistics implements Serializable {
     return dataSize;
   }
 
-  public ColStatistics getColumnStatisticsFromFQColName(String fqColName) {
-    if (columnStats != null) {
-      return columnStats.get(fqColName);
-    }
-    return null;
-  }
-
   public ColStatistics getColumnStatisticsFromColName(String colName) {
     if (columnStats == null) {
       return null;
@@ -248,16 +242,10 @@ public class Statistics implements Serializable {
     return null;
   }
 
-  public ColStatistics getColumnStatisticsForColumn(String tabAlias, String colName) {
-    String fqColName = StatsUtils.getFullyQualifiedColumnName(tabAlias, colName);
-    return getColumnStatisticsFromFQColName(fqColName);
-  }
-
   public List<ColStatistics> getColumnStats() {
     if (columnStats != null) {
       return Lists.newArrayList(columnStats.values());
     }
     return null;
   }
-
 }
