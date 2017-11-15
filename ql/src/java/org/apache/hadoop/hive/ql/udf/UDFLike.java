@@ -18,6 +18,8 @@
 
 package org.apache.hadoop.hive.ql.udf;
 
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,8 +41,6 @@ import org.apache.hadoop.io.Text;
     + "  27      val_27  2008-04-08      12")
 @VectorizedExpressions({FilterStringColLikeStringScalar.class})
 public class UDFLike extends UDF {
-  private final Text lastLikePattern = new Text();
-  private Pattern p = null;
 
   // Doing characters comparison directly instead of regular expression
   // matching for simple patterns like "%abc%".
@@ -52,8 +52,26 @@ public class UDFLike extends UDF {
     COMPLEX, // all other cases, such as "ab%c_de"
   }
 
-  private PatternType type = PatternType.NONE;
-  private final Text simplePattern = new Text();
+  private class LRUCache<K, V> extends LinkedHashMap<K, V> {
+    private long cacheSize;
+
+    public LRUCache(long cacheSize) {
+      this.cacheSize = cacheSize;
+    }
+
+    protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+      return size() >= cacheSize;
+    }
+  }
+
+  private class LikeObject {
+    private Pattern p = null;
+    private PatternType type = PatternType.NONE;
+    private Text simplePattern = new Text();
+  }
+
+  private long likePatternCacheSize = 1000;
+  private final LRUCache<Text,LikeObject> likePatternMap = new LRUCache<>(likePatternCacheSize);
 
   private final BooleanWritable result = new BooleanWritable();
 
@@ -86,17 +104,17 @@ public class UDFLike extends UDF {
 
   /**
    * Parses the likePattern. Based on it is a simple pattern or not, the
-   * function might change two member variables. {@link #type} will be changed
-   * to the corresponding pattern type; {@link #simplePattern} will record the
+   * function might change two member variables. {@link LikeObject#type} will be changed
+   * to the corresponding pattern type; {@link LikeObject#simplePattern} will record the
    * string in it for later pattern matching if it is a simple pattern.
    * <p>
    * Examples: <blockquote>
    *
    * <pre>
-   * parseSimplePattern("%abc%") changes {@link #type} to PatternType.MIDDLE
-   * and changes {@link #simplePattern} to "abc"
-   * parseSimplePattern("%ab_c%") changes {@link #type} to PatternType.COMPLEX
-   * and does not change {@link #simplePattern}
+   * parseSimplePattern("%abc%") changes {@link LikeObject#type} to PatternType.MIDDLE
+   * and changes {@link LikeObject#simplePattern} to "abc"
+   * parseSimplePattern("%ab_c%") changes {@link LikeObject#type} to PatternType.COMPLEX
+   * and does not change {@link LikeObject#simplePattern}
    * </pre>
    *
    * </blockquote>
@@ -104,32 +122,33 @@ public class UDFLike extends UDF {
    * @param likePattern
    *          the input LIKE query pattern
    */
-  private void parseSimplePattern(String likePattern) {
+  private LikeObject parseSimplePattern(String likePattern) {
     int length = likePattern.length();
     int beginIndex = 0;
     int endIndex = length;
     char lastChar = 'a';
     String strPattern = new String();
-    type = PatternType.NONE;
+    LikeObject likeObject = new LikeObject();
+    likeObject.type = PatternType.NONE;
 
     for (int i = 0; i < length; i++) {
       char n = likePattern.charAt(i);
       if (n == '_') { // such as "a_b"
         if (lastChar != '\\') { // such as "a%bc"
-          type = PatternType.COMPLEX;
-          return;
+          likeObject.type = PatternType.COMPLEX;
+          break;
         } else { // such as "abc\%de%"
           strPattern += likePattern.substring(beginIndex, i - 1);
           beginIndex = i;
         }
       } else if (n == '%') {
         if (i == 0) { // such as "%abc"
-          type = PatternType.END;
+          likeObject.type = PatternType.END;
           beginIndex = 1;
         } else if (i < length - 1) {
           if (lastChar != '\\') { // such as "a%bc"
-            type = PatternType.COMPLEX;
-            return;
+            likeObject.type = PatternType.COMPLEX;
+            break;
           } else { // such as "abc\%de%"
             strPattern += likePattern.substring(beginIndex, i - 1);
             beginIndex = i;
@@ -137,10 +156,10 @@ public class UDFLike extends UDF {
         } else {
           if (lastChar != '\\') {
             endIndex = length - 1;
-            if (type == PatternType.END) { // such as "%abc%"
-              type = PatternType.MIDDLE;
+            if (likeObject.type == PatternType.END) { // such as "%abc%"
+              likeObject.type = PatternType.MIDDLE;
             } else {
-              type = PatternType.BEGIN; // such as "abc%"
+              likeObject.type = PatternType.BEGIN; // such as "abc%"
             }
           } else { // such as "abc\%"
             strPattern += likePattern.substring(beginIndex, i - 1);
@@ -152,8 +171,13 @@ public class UDFLike extends UDF {
       lastChar = n;
     }
 
-    strPattern += likePattern.substring(beginIndex, endIndex);
-    simplePattern.set(strPattern);
+    if (likeObject.type == PatternType.COMPLEX) {
+      likeObject.p = Pattern.compile(likePatternToRegExp(likePattern));
+    } else {
+      strPattern += likePattern.substring(beginIndex, endIndex);
+      likeObject.simplePattern.set(strPattern);
+    }
+    return likeObject;
   }
 
   private static boolean find(Text s, Text sub, int startS, int endS) {
@@ -177,15 +201,16 @@ public class UDFLike extends UDF {
     if (s == null || likePattern == null) {
       return null;
     }
-    if (!likePattern.equals(lastLikePattern)) {
-      lastLikePattern.set(likePattern);
-      String strLikePattern = likePattern.toString();
 
-      parseSimplePattern(strLikePattern);
-      if (type == PatternType.COMPLEX) {
-        p = Pattern.compile(likePatternToRegExp(strLikePattern));
-      }
+    LikeObject likeObject = likePatternMap.get(likePattern);
+    if(likeObject==null){
+      String strLikePattern = likePattern.toString();
+      likeObject = parseSimplePattern(strLikePattern);
+      likePatternMap.put(likePattern, likeObject);
     }
+    Pattern p =likeObject.p;
+    PatternType type = likeObject.type;
+    Text simplePattern = likeObject.simplePattern;
 
     if (type == PatternType.COMPLEX) {
       Matcher m = p.matcher(s.toString());
