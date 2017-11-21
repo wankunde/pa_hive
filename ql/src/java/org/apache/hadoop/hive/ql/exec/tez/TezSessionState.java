@@ -236,7 +236,6 @@ public class TezSessionState {
         + ", scratch dir: " + tezScratchDir + ")");
 
     TezJobMonitor.initShutdownHook();
-    session.start();
     if (!isAsync) {
       startSessionAndContainers(session, conf, commonLocalResources, tezConfig, false);
       this.session = session;
@@ -244,7 +243,12 @@ public class TezSessionState {
       FutureTask<TezClient> sessionFuture = new FutureTask<>(new Callable<TezClient>() {
         @Override
         public TezClient call() throws Exception {
-          return startSessionAndContainers(session, conf, commonLocalResources, tezConfig, true);
+          try {
+            return startSessionAndContainers(session, conf, commonLocalResources, tezConfig, true);
+          } catch (Throwable t) {
+            LOG.error("Failed to start Tez session", t);
+            throw (t instanceof Exception) ? (Exception)t : new Exception(t);
+          }
         }
       });
       new Thread(sessionFuture, "Tez session start thread").start();
