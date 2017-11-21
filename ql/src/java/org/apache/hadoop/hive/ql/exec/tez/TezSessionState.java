@@ -31,6 +31,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.security.auth.login.LoginException;
 
@@ -45,7 +52,7 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.ql.session.SessionState;
-import org.apache.hadoop.hive.shims.ShimLoader;
+import org.apache.hadoop.hive.ql.session.SessionState.LogHelper;
 import org.apache.hadoop.hive.shims.Utils;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.api.records.LocalResource;
@@ -69,6 +76,9 @@ public class TezSessionState {
   private Path tezScratchDir;
   private LocalResource appJarLr;
   private TezClient session;
+  private Future<TezClient> sessionFuture;
+  /** Console used for user feedback during async session opening. */
+  private LogHelper console;
   private String sessionId;
   private final DagUtils utils;
   private String queueName;
@@ -99,11 +109,37 @@ public class TezSessionState {
     this.sessionId = sessionId;
   }
 
-  /**
-   * Returns whether a session has been established
-   */
+  public boolean isOpening() {
+    if (session != null || sessionFuture == null) return false;
+    try {
+      session = sessionFuture.get(0, TimeUnit.NANOSECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    } catch (CancellationException e) {
+      return false;
+    } catch (TimeoutException e) {
+      return true;
+    }
+    return false;
+  }
+
   public boolean isOpen() {
-    return session != null;
+    if (session != null) return true;
+    if (sessionFuture == null) return false;
+    try {
+      session = sessionFuture.get(0, TimeUnit.NANOSECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    } catch (TimeoutException | CancellationException e) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -130,9 +166,21 @@ public class TezSessionState {
    * @throws URISyntaxException
    * @throws LoginException
    * @throws TezException
+   * @throws InterruptedException
    */
   public void open(HiveConf conf, String[] additionalFiles)
     throws IOException, LoginException, IllegalArgumentException, URISyntaxException, TezException {
+    openInternal(conf, additionalFiles, false, null);
+  }
+
+  public void beginOpen(HiveConf conf, String[] additionalFiles, LogHelper console)
+          throws IOException, LoginException, IllegalArgumentException, URISyntaxException, TezException {
+    openInternal(conf, additionalFiles, true, console);
+  }
+
+  private void openInternal(
+          final HiveConf conf, String[] additionalFiles, boolean isAsync, LogHelper console)
+          throws IOException, LoginException, IllegalArgumentException, URISyntaxException, TezException {
     this.conf = conf;
     this.queueName = conf.get("tez.queue.name");
     this.doAsEnabled = conf.getBoolVar(HiveConf.ConfVars.HIVE_SERVER2_ENABLE_DOAS);
@@ -158,7 +206,7 @@ public class TezSessionState {
     appJarLr = createJarLocalResource(utils.getExecJarPathLocal());
 
     // configuration for the application master
-    Map<String, LocalResource> commonLocalResources = new HashMap<String, LocalResource>();
+    final Map<String, LocalResource> commonLocalResources = new HashMap<String, LocalResource>();
     commonLocalResources.put(utils.getBaseName(appJarLr), appJarLr);
     for (LocalResource lr : localizedResources) {
       commonLocalResources.put(utils.getBaseName(lr), lr);
@@ -170,7 +218,7 @@ public class TezSessionState {
 
     // and finally we're ready to create and start the session
     // generate basic tez config
-    TezConfiguration tezConfig = new TezConfiguration(conf);
+    final TezConfiguration tezConfig = new TezConfiguration(conf);
     tezConfig.set(TezConfiguration.TEZ_AM_STAGING_DIR, tezScratchDir.toUri().toString());
 
     if (HiveConf.getBoolVar(conf, ConfVars.HIVE_PREWARM_ENABLED)) {
@@ -181,7 +229,7 @@ public class TezSessionState {
       tezConfig.setInt(TezConfiguration.TEZ_AM_SESSION_MIN_HELD_CONTAINERS, n);
     }
 
-    session = TezClient.create("HIVE-" + sessionId, tezConfig, true,
+    final TezClient session = TezClient.create("HIVE-" + sessionId, tezConfig, true,
         commonLocalResources, null);
 
     LOG.info("Opening new Tez Session (id: " + sessionId
@@ -189,32 +237,79 @@ public class TezSessionState {
 
     TezJobMonitor.initShutdownHook();
     session.start();
+    if (!isAsync) {
+      startSessionAndContainers(session, conf, commonLocalResources, tezConfig, false);
+      this.session = session;
+    } else {
+      FutureTask<TezClient> sessionFuture = new FutureTask<>(new Callable<TezClient>() {
+        @Override
+        public TezClient call() throws Exception {
+          return startSessionAndContainers(session, conf, commonLocalResources, tezConfig, true);
+        }
+      });
+      new Thread(sessionFuture, "Tez session start thread").start();
+      // We assume here nobody will try to get session before open() returns.
+      this.console = console;
+      this.sessionFuture = sessionFuture;
+    }
+  }
 
-    if (HiveConf.getBoolVar(conf, ConfVars.HIVE_PREWARM_ENABLED)) {
-      int n = HiveConf.getIntVar(conf, ConfVars.HIVE_PREWARM_NUM_CONTAINERS);
-      LOG.info("Prewarming " + n + " containers  (id: " + sessionId
-          + ", scratch dir: " + tezScratchDir + ")");
-      PreWarmVertex prewarmVertex = utils.createPreWarmVertex(tezConfig, n,
-          commonLocalResources);
-      try {
-        session.preWarm(prewarmVertex);
-      } catch (IOException ie) {
-        if (ie.getMessage().contains("Interrupted while waiting")) {
-          if (LOG.isDebugEnabled()) {
-            LOG.debug("Hive Prewarm threw an exception ", ie);
+  private TezClient startSessionAndContainers(TezClient session, HiveConf conf,
+                                              Map<String, LocalResource> commonLocalResources, TezConfiguration tezConfig,
+                                              boolean isOnThread) throws TezException, IOException {
+    session.start();
+    boolean isSuccessful = false;
+    try {
+      if (HiveConf.getBoolVar(conf, ConfVars.HIVE_PREWARM_ENABLED)) {
+        int n = HiveConf.getIntVar(conf, ConfVars.HIVE_PREWARM_NUM_CONTAINERS);
+        LOG.info("Prewarming " + n + " containers  (id: " + sessionId
+                + ", scratch dir: " + tezScratchDir + ")");
+        PreWarmVertex prewarmVertex = utils.createPreWarmVertex(
+                tezConfig, n, commonLocalResources);
+        try {
+          session.preWarm(prewarmVertex);
+        } catch (IOException ie) {
+          if (!isOnThread && ie.getMessage().contains("Interrupted while waiting")) {
+            if (LOG.isDebugEnabled()) {
+              LOG.debug("Hive Prewarm threw an exception ", ie);
+            }
+          } else {
+            throw ie;
           }
-        } else {
-          throw ie;
         }
       }
+      try {
+        session.waitTillReady();
+      } catch (InterruptedException ie) {
+        if (isOnThread) throw new IOException(ie);
+        //ignore
+      }
+      isSuccessful = true;
+      return session;
+    } finally {
+      if (isOnThread && !isSuccessful) {
+        closeAndIgnoreExceptions(session);
+      }
     }
-    try {
-      session.waitTillReady();
-    } catch(InterruptedException ie) {
-      //ignore
-    }
+  }
 
-    openSessions.add(this);
+  private static void closeAndIgnoreExceptions(TezClient session) {
+    try {
+      session.stop();
+    } catch (SessionNotRunning nr) {
+      // Ignore.
+    } catch (IOException | TezException ex) {
+      LOG.info("Failed to close Tez session after failure to initialize: " + ex.getMessage());
+    }
+  }
+
+  public void endOpen() throws InterruptedException, CancellationException {
+    if (this.session != null || this.sessionFuture == null) return;
+    try {
+      this.session = this.sessionFuture.get();
+    } catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   public void refreshLocalResourcesFromConf(HiveConf conf)
@@ -256,27 +351,46 @@ public class TezSessionState {
    * @throws TezException
    */
   public void close(boolean keepTmpDir) throws TezException, IOException {
-    if (!isOpen()) {
-      return;
-    }
-
-    LOG.info("Closing Tez Session");
-    try {
-      session.stop();
-      openSessions.remove(this);
-    } catch (SessionNotRunning nr) {
-      // ignore
+    if (session != null) {
+      LOG.info("Closing Tez Session");
+      closeClient(session);
+    } else if (sessionFuture != null) {
+      sessionFuture.cancel(true);
+      TezClient asyncSession = null;
+      try {
+        asyncSession = sessionFuture.get(); // In case it was done and noone looked at it.
+      } catch (ExecutionException | CancellationException e) {
+        // ignore
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        // ignore
+      }
+      if (asyncSession != null) {
+        LOG.info("Closing Tez Session");
+        closeClient(asyncSession);
+      }
     }
 
     if (!keepTmpDir) {
       cleanupScratchDir();
     }
     session = null;
+    sessionFuture = null;
+    console = null;
     tezScratchDir = null;
     conf = null;
     appJarLr = null;
     additionalFilesNotFromConf.clear();
     localizedResources.clear();
+  }
+
+  private void closeClient(TezClient client) throws TezException,
+          IOException {
+    try {
+      client.stop();
+    } catch (SessionNotRunning nr) {
+      // ignore
+    }
   }
 
   public void cleanupScratchDir () throws IOException {
@@ -290,6 +404,21 @@ public class TezSessionState {
   }
 
   public TezClient getSession() {
+    if (session == null && sessionFuture != null) {
+      if (!sessionFuture.isDone()) {
+        console.printInfo("Waiting for Tez session and AM to be ready...");
+      }
+      try {
+        session = sessionFuture.get();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return null;
+      } catch (ExecutionException e) {
+        throw new RuntimeException(e);
+      } catch (CancellationException e) {
+        return null;
+      }
+    }
     return session;
   }
 
