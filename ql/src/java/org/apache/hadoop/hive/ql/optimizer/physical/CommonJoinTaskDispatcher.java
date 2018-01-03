@@ -429,6 +429,10 @@ public class CommonJoinTaskDispatcher extends AbstractJoinTaskDispatcher impleme
       // the threshold size, convert the join into map-join and don't create a conditional task
       boolean convertJoinMapJoin = HiveConf.getBoolVar(conf,
           HiveConf.ConfVars.HIVECONVERTJOINNOCONDITIONALTASK);
+
+      // This is the numbers that the user has specified to fit in mapjoin
+      long mapJoinNumber = HiveConf.getLongVar(conf,
+              HiveConf.ConfVars.HIVECONVERTJOINMAXNUMBER);
       int bigTablePosition = -1;
       if (convertJoinMapJoin) {
         // This is the threshold that the user has specified to fit in mapjoin
@@ -442,6 +446,10 @@ public class CommonJoinTaskDispatcher extends AbstractJoinTaskDispatcher impleme
           Set<String> participants = GenMapRedUtils.findAliases(currWork, parent);
           long sumOfOthers = Utilities.sumOfExcept(aliasToSize, aliases, participants);
           if (sumOfOthers < 0 || sumOfOthers > mapJoinSize) {
+            continue; // some small alias is not known or too big
+          }
+          long numberOfOthers = Utilities.numsberOfExcept(currWork.getAliasToPartnInfo(), aliases, participants);
+          if (numberOfOthers > mapJoinNumber) {
             continue; // some small alias is not known or too big
           }
           if (bigTableSize == null && bigTablePosition >= 0 && tablePosition < bigTablePosition) {
@@ -492,6 +500,11 @@ public class CommonJoinTaskDispatcher extends AbstractJoinTaskDispatcher impleme
 
         Operator<?> startOp = joinOp.getParentOperators().get(pos);
         Set<String> aliases = GenMapRedUtils.findAliases(currWork, startOp);
+
+        long numberOf = Utilities.numberOf(currWork.getAliasToPartnInfo(), aliases);
+        if (numberOf > mapJoinNumber) {
+          continue; // some small alias is not known or too big
+        }
 
         long aliasKnownSize = Utilities.sumOf(aliasToSize, aliases);
         if (cannotConvert(aliasKnownSize, aliasTotalKnownInputSize, ThresholdOfSmallTblSizeSum)) {

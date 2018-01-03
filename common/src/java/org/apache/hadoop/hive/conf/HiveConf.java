@@ -986,6 +986,9 @@ public class HiveConf extends Configuration {
         "If hive.auto.convert.join.noconditionaltask is off, this parameter does not take affect. \n" +
         "However, if it is on, and the sum of size for n-1 of the tables/partitions for a n-way join is smaller than this size, \n" +
         "the join is directly converted to a mapjoin(there is no conditional task). The default is 10MB"),
+    HIVECONVERTJOINMAXNUMBER("hive.auto.convert.join.max.number", 2500000L,
+        "If the sum of row count for n-1 of the tables/partitions for a n-way join is bigger than this size, \n" +
+        "the join cannot be converted to a mapjoin. The default is 2500000L"),
     HIVECONVERTJOINUSENONSTAGED("hive.auto.convert.join.use.nonstaged", false,
         "For conditional joins, if input stream from a small alias can be directly applied to join operator without \n" +
         "filtering or projection, the alias need not to be pre-staged in distributed cache via mapred local task.\n" +

@@ -99,6 +99,7 @@ import org.apache.hadoop.hive.common.HiveInterruptCallback;
 import org.apache.hadoop.hive.common.HiveInterruptUtils;
 import org.apache.hadoop.hive.common.HiveStatsUtils;
 import org.apache.hadoop.hive.common.JavaUtils;
+import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.Warehouse;
@@ -2671,6 +2672,37 @@ public final class Utilities {
       total += size;
     }
     return total;
+  }
+
+  public static long numberOf(LinkedHashMap<String,PartitionDesc> aliasToPartnInfo, Set<String> aliases) {
+    return numsberOfExcept(aliasToPartnInfo, aliases, null);
+  }
+  /**
+   * ignore if partition's statistics is null.
+   * @param aliasToPartnInfo
+   * @param aliases
+   * @param excepts
+   * @return
+   */
+  public static long numsberOfExcept(LinkedHashMap<String,PartitionDesc> aliasToPartnInfo,
+                                     Set<String> aliases, Set<String> excepts) {
+    long nums = 0;
+    for (String alias : aliases) {
+      if (excepts != null && excepts.contains(alias)) {
+        continue;
+      }
+      PartitionDesc partInfo = aliasToPartnInfo.get(alias);
+      if (partInfo != null) {
+        Properties properties = partInfo.isPartitioned() ?
+                partInfo.getProperties() : partInfo.getTableDesc().getProperties();
+        if(properties != null) {
+          Object rowCount = properties.get(StatsSetupConst.ROW_COUNT);
+          if (rowCount != null)
+            nums += Long.parseLong(rowCount.toString());
+        }
+      }
+    }
+    return nums;
   }
 
   public static boolean isEmptyPath(JobConf job, Path dirPath, Context ctx)
