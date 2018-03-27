@@ -35,10 +35,12 @@ import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
 import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hive.service.AbstractService;
 import org.apache.hive.service.ServiceException;
 import org.apache.hive.service.ServiceUtils;
 import org.apache.hive.service.auth.HiveAuthFactory;
+import org.apache.hive.service.auth.PaicHiveServer2Auth;
 import org.apache.hive.service.auth.TSetIpAddressProcessor;
 import org.apache.hive.service.cli.CLIService;
 import org.apache.hive.service.cli.FetchOrientation;
@@ -90,6 +92,8 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
 
   protected TServerEventHandler serverEventHandler;
   protected ThreadLocal<ServerContext> currentServerContext;
+
+  private PaicHiveServer2Auth auth;
 
   static class ThriftCLIServerContext implements ServerContext {
     private SessionHandle sessionHandle = null;
@@ -200,6 +204,18 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
     }
     minWorkerThreads = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_THRIFT_MIN_WORKER_THREADS);
     maxWorkerThreads = hiveConf.getIntVar(ConfVars.HIVE_SERVER2_THRIFT_MAX_WORKER_THREADS);
+
+    try {
+      String driverUrl = HiveConf.getVar(hiveConf, HiveConf.ConfVars.METASTORECONNECTURLKEY);
+      String user = HiveConf.getVar(hiveConf, HiveConf.ConfVars.METASTORE_CONNECTION_USER_NAME);
+
+      String passwd = ShimLoader.getHadoopShims().getPassword(hiveConf, ConfVars.METASTOREPWD.varname);
+      auth = new PaicHiveServer2Auth();
+      auth.init(driverUrl,user,passwd);
+    } catch (IOException e) {
+      LOG.error("init paic Authentication fail!",e);
+    }
+
     super.init(hiveConf);
   }
 
@@ -210,6 +226,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
       new Thread(this).start();
       isStarted = true;
     }
+    auth.start();
   }
 
   @Override
@@ -229,6 +246,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
       }
       isStarted = false;
     }
+    auth.stop();
     super.stop();
   }
 
@@ -418,6 +436,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
     TProtocolVersion protocol = getMinVersion(CLIService.SERVER_VERSION,
         req.getClient_protocol());
     SessionHandle sessionHandle;
+//    auth.getSessionHandle(req.getUsername(),req.getPassword(),ipAddress);
     if (cliService.getHiveConf().getBoolVar(ConfVars.HIVE_SERVER2_ENABLE_DOAS) &&
         (userName != null)) {
       String delegationTokenStr = getDelegationToken(userName);
@@ -427,6 +446,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
       sessionHandle = cliService.openSession(protocol, userName, req.getPassword(),
           ipAddress, req.getConfiguration());
     }
+    auth.logSessionHandle(userName,ipAddress,sessionHandle);
     res.setServerProtocolVersion(protocol);
     return sessionHandle;
   }
@@ -506,6 +526,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
       String statement = req.getStatement();
       Map<String, String> confOverlay = req.getConfOverlay();
       Boolean runAsync = req.isRunAsync();
+      auth.executeStatement(sessionHandle,getIpAddress(),statement,runAsync,confOverlay);
       OperationHandle operationHandle = runAsync ?
           cliService.executeStatementAsync(sessionHandle, statement, confOverlay)
           : cliService.executeStatement(sessionHandle, statement, confOverlay);
