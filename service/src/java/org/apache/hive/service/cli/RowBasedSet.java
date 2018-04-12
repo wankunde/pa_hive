@@ -57,6 +57,11 @@ public class RowBasedSet implements RowSet {
   public RowBasedSet addRow(Object[] fields) {
     TRow tRow = new TRow();
     for (int i = 0; i < fields.length; i++) {
+      TColumnValue columnValue = ColumnValue.toTColumnValue(types[i], fields[i]);
+      if(columnValue.isSetStringVal()) {
+        String value = columnValue.getStringVal().getValue();
+        columnValue.getStringVal().setValue(PaicUtil.hidePrivateMsg(value));
+      }
       tRow.addToColVals(ColumnValue.toTColumnValue(types[i], fields[i]));
     }
     rows.add(tRow);

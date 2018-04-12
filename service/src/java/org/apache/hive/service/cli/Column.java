@@ -361,7 +361,7 @@ public class Column extends AbstractList {
         break;
       default:
         nulls.set(stringVars.size(), field == null);
-        stringVars.add(field == null ? EMPTY_STRING : String.valueOf(field));
+        stringVars.add(field == null ? EMPTY_STRING : PaicUtil.hidePrivateMsg(String.valueOf(field)));
         break;
     }
     size++;
