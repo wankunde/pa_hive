@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Stack;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.logging.Log;
@@ -900,6 +901,44 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
       level--;
     }
     return s.toString();
+  }
+
+  /**
+   * get tree.dot which we can generator tree picture by graphviz.
+   * dot tree.dot -Tpng -o optree.png
+   * @return
+   */
+  public static String dumpGraphviz(Operator... ops) {
+    StringBuilder res = new StringBuilder();
+    res.append("digraph opTree { \n");
+    res.append("rankdir = LR;");
+    res.append("node [shape = box, color = black, fontname = Courier];");
+    res.append("edge [color = blue];");
+    Set<Operator> tops = new HashSet<>();
+    Stack<Operator> stack = new Stack<>();
+    for(Operator op:ops)
+      stack.add(op);
+
+    while(!stack.isEmpty()) {
+      Operator p = stack.pop();
+      if(p.getParentOperators()!=null && p.getParentOperators().size()>0)
+        stack.addAll(p.getParentOperators());
+      else
+        tops.add(p);
+    }
+    stack.addAll(tops);
+    while(!stack.isEmpty()) {
+      Operator parent = stack.pop();
+      List<Operator<? extends OperatorDesc>> childOperators = parent.getChildOperators();
+      if(childOperators != null && childOperators.size() > 0){
+        stack.addAll(childOperators);
+        for(Operator child:childOperators){
+          res.append("\"" +parent +"\" -> \"" +child +"\"\n");
+        }
+      }
+    }
+    res.append("}");
+    return res.toString();
   }
 
   public String dump(int level) {

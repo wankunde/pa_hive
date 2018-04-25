@@ -1,5 +1,8 @@
 package org.apache.hive.service.cli;
 
+import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.ql.session.SessionState;
+
 import java.text.SimpleDateFormat;
 import java.util.HashSet;
 import java.util.Set;
@@ -59,12 +62,14 @@ public class PaicUtil {
   public static String hidePrivateMsg(String value) {
     if (value == null)
       return value;
-    else if (isPhone.matcher(value).matches())  // phone
-      return value.substring(0, 3) + "****" + value.substring(7, 11);
-    else if (isValidIdCard(value))  // id card
-      return value.substring(0, 4) + "**********" + value.substring(value.length() - 4, value.length());
-    else
-      return value;
+
+    if (HiveConf.getBoolVar(SessionState.getSessionConf(), HiveConf.ConfVars.HIVE_SERVER2_PAIC_HIDE_PRIVATE)) {
+      if (isPhone.matcher(value).matches())  // phone
+        return value.substring(0, 3) + "****" + value.substring(7, 11);
+      else if (isValidIdCard(value))  // id card
+        return value.substring(0, 4) + "**********" + value.substring(value.length() - 4, value.length());
+    }
+    return value;
   }
 
   public static void main(String[] args) {
