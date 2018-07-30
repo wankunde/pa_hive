@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * create table PAIC_AUTH (username varchar(30),password varchar(30), primary key(username));
@@ -31,12 +32,14 @@ public class PaicHiveServer2Auth implements PasswdAuthenticationProvider {
       @Override
       public void run() {
         while (true) {
+          Map<String, String> newAuth = new ConcurrentHashMap<>();
           try (Connection conn = DriverManager.getConnection(dbUrl, dbUsername, dbPassword);
                Statement stmt = conn.createStatement();
                ResultSet rs = stmt.executeQuery("select * from PAIC_AUTH ")) {
             while (rs.next()) {
-              auth.put(rs.getString(1), rs.getString(2));
+              newAuth.put(rs.getString(1), rs.getString(2));
             }
+            auth = newAuth;
             Thread.currentThread().sleep(3 * 60 * 1000);
           } catch (SQLException | InterruptedException e) {
             LOG.error("query hive metastore error!", e);
@@ -59,7 +62,7 @@ public class PaicHiveServer2Auth implements PasswdAuthenticationProvider {
     }
   }
 
-  private static Map<String, String> auth = new HashMap<>();
+  private static Map<String, String> auth = new ConcurrentHashMap<>();
 
   public void logSessionHandle(String username, String ipAddress, SessionHandle sessionHandle) {
     LOG.info("user " + username + " from " + ipAddress + " get sessionHandle " + sessionHandle);
