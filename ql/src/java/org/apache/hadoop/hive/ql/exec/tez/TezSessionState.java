@@ -244,6 +244,13 @@ public class TezSessionState {
         @Override
         public TezClient call() throws Exception {
           try {
+            long tezSessionDelayStart = HiveConf.getLongVar(conf,ConfVars.TEZ_SESSION_DELAY_START);
+
+            try {
+              Thread.currentThread().sleep(tezSessionDelayStart);
+            } catch (InterruptedException e) {
+              LOG.debug("start Tez session thread was interrupted! ", e);
+            }
             return startSessionAndContainers(session, conf, commonLocalResources, tezConfig, true);
           } catch (Throwable t) {
             LOG.error("Failed to start Tez session", t);
