@@ -451,7 +451,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       BooleanWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != BooleanWritable.class) {
           result = new BooleanWritable();
         } else {
           result = (BooleanWritable) previous;
@@ -506,7 +506,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       ByteWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != ByteWritable.class) {
           result = new ByteWritable();
         } else {
           result = (ByteWritable) previous;
@@ -576,7 +576,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       ShortWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != ShortWritable.class) {
           result = new ShortWritable();
         } else {
           result = (ShortWritable) previous;
@@ -646,7 +646,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       IntWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != IntWritable.class) {
           result = new IntWritable();
         } else {
           result = (IntWritable) previous;
@@ -716,7 +716,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       LongWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != LongWritable.class) {
           result = new LongWritable();
         } else {
           result = (LongWritable) previous;
@@ -779,7 +779,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       FloatWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != FloatWritable.class) {
           result = new FloatWritable();
         } else {
           result = (FloatWritable) previous;
@@ -862,7 +862,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       DoubleWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != DoubleWritable.class) {
           result = new DoubleWritable();
         } else {
           result = (DoubleWritable) previous;
@@ -955,7 +955,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       BytesWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != BytesWritable.class) {
           result = new BytesWritable();
         } else {
           result = (BytesWritable) previous;
@@ -1045,7 +1045,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       TimestampWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != TimestampWritable.class) {
           result = new TimestampWritable();
         } else {
           result = (TimestampWritable) previous;
@@ -1149,7 +1149,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       DateWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != DateWritable.class) {
           result = new DateWritable();
         } else {
           result = (DateWritable) previous;
@@ -1228,7 +1228,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       HiveDecimalWritable result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != HiveDecimalWritable.class) {
           result = new HiveDecimalWritable();
         } else {
           result = (HiveDecimalWritable) previous;
@@ -1472,7 +1472,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       Text result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != Text.class) {
           result = new Text();
         } else {
           result = (Text) previous;
@@ -1606,7 +1606,7 @@ class RecordReaderImpl implements RecordReader {
       Text result = null;
       if (valuePresent) {
         int entry = (int) reader.next();
-        if (previous == null) {
+        if (previous == null || previous.getClass() != Text.class) {
           result = new Text();
         } else {
           result = (Text) previous;
@@ -1710,7 +1710,7 @@ class RecordReaderImpl implements RecordReader {
     @Override
     Object next(Object previous) throws IOException {
       HiveCharWritable result = null;
-      if (previous == null) {
+      if (previous == null || previous.getClass() != HiveCharWritable.class) {
         result = new HiveCharWritable();
       } else {
         result = (HiveCharWritable) previous;
@@ -1774,7 +1774,7 @@ class RecordReaderImpl implements RecordReader {
     @Override
     Object next(Object previous) throws IOException {
       HiveVarcharWritable result = null;
-      if (previous == null) {
+      if (previous == null || previous.getClass() != HiveVarcharWritable.class) {
         result = new HiveVarcharWritable();
       } else {
         result = (HiveVarcharWritable) previous;
@@ -1863,7 +1863,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       OrcStruct result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != OrcStruct.class) {
           result = new OrcStruct(fields.length);
         } else {
           result = (OrcStruct) previous;
@@ -1962,7 +1962,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       OrcUnion result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != OrcUnion.class) {
           result = new OrcUnion();
         } else {
           result = (OrcUnion) previous;
@@ -2034,7 +2034,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       List<Object> result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != ArrayList.class) {
           result = new ArrayList<Object>();
         } else {
           result = (ArrayList<Object>) previous;
@@ -2136,7 +2136,7 @@ class RecordReaderImpl implements RecordReader {
       super.next(previous);
       Map<Object, Object> result = null;
       if (valuePresent) {
-        if (previous == null) {
+        if (previous == null || previous.getClass() != LinkedHashMap.class) {
           result = new LinkedHashMap<Object, Object>();
         } else {
           result = (LinkedHashMap<Object, Object>) previous;
