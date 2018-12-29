@@ -183,7 +183,10 @@ public class Optimizer {
    */
   public ParseContext optimize() throws SemanticException {
     for (Transform t : transformations) {
-        pctx = t.transform(pctx);
+      LOG.debug("start transform" + t);
+      // deal and log with pctx.getTopOps().values()
+      pctx = t.transform(pctx);
+      LOG.debug("end transform" + t);
     }
     return pctx;
   }

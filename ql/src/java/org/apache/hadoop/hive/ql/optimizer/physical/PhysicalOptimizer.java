@@ -21,6 +21,8 @@ package org.apache.hadoop.hive.ql.optimizer.physical;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
@@ -30,6 +32,8 @@ import org.apache.hadoop.hive.ql.parse.SemanticException;
  * PhysicalPlanResolver. Each resolver has its own set of optimization rule.
  */
 public class PhysicalOptimizer {
+  private static final Log LOG = LogFactory.getLog(PhysicalOptimizer.class);
+
   private PhysicalContext pctx;
   private List<PhysicalPlanResolver> resolvers;
 
@@ -104,7 +108,10 @@ public class PhysicalOptimizer {
    */
   public PhysicalContext optimize() throws SemanticException {
     for (PhysicalPlanResolver r : resolvers) {
+      LOG.debug("start physical optimize by " + r);
+      // deal and log with pctx.getRootTasks()
       pctx = r.resolve(pctx);
+      LOG.debug("end physical optimize by " + r);
     }
     return pctx;
   }
