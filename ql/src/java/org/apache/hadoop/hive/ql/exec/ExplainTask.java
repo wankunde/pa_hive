@@ -192,7 +192,10 @@ public class ExplainTask extends Task<ExplainWork> implements Serializable {
       }
     }
 
-    List<Task> ordered = StageIDsRearranger.getExplainOrder(conf, tasks);
+    List<Task<? extends Serializable>> ordered = StageIDsRearranger.getExplainOrder(conf, tasks);
+
+    out.println("TASK GRAPH");
+    out.println(Task.dumpGraphviz(ordered));
 
     if (fetchTask != null) {
       fetchTask.setParentTasks((List)StageIDsRearranger.getFetchSources(tasks));
@@ -908,7 +911,7 @@ public class ExplainTask extends Task<ExplainWork> implements Serializable {
   }
 
   public JSONObject outputDependencies(PrintStream out, boolean jsonOutput,
-      boolean appendTaskType, List<Task> tasks)
+      boolean appendTaskType, List<Task<? extends Serializable>> tasks)
       throws Exception {
 
     if (out != null) {
@@ -926,7 +929,7 @@ public class ExplainTask extends Task<ExplainWork> implements Serializable {
     return jsonOutput ? json : null;
   }
 
-  public JSONObject outputStagePlans(PrintStream out, List<Task> tasks,
+  public JSONObject outputStagePlans(PrintStream out, List<Task<? extends Serializable>> tasks,
       boolean jsonOutput, boolean isExtended)
       throws Exception {
 

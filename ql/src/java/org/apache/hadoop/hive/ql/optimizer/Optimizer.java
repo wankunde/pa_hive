@@ -24,6 +24,7 @@ import java.util.List;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.optimizer.correlation.CorrelationOptimizer;
 import org.apache.hadoop.hive.ql.optimizer.correlation.ReduceSinkDeDuplication;
 import org.apache.hadoop.hive.ql.optimizer.index.RewriteGBUsingIndex;
@@ -183,10 +184,20 @@ public class Optimizer {
    */
   public ParseContext optimize() throws SemanticException {
     for (Transform t : transformations) {
-      LOG.debug("start transform" + t);
-      // deal and log with pctx.getTopOps().values()
+      String debugInfo = "";
+      if (LOG.isDebugEnabled()) {
+        debugInfo = Operator.dumpGraphviz(pctx.getTopOps().values());
+      }
+
       pctx = t.transform(pctx);
-      LOG.debug("end transform" + t);
+      if (LOG.isDebugEnabled()) {
+        String newDebugInfo = Operator.dumpGraphviz(pctx.getTopOps().values());
+        if (!debugInfo.equals(newDebugInfo)) {
+          LOG.debug("start transform " + t + "\n" + debugInfo);
+          LOG.debug("end transform " + t + "\n" + newDebugInfo);
+        }
+      }
+
     }
     return pctx;
   }

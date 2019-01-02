@@ -52,16 +52,16 @@ public class StageIDsRearranger implements PhysicalPlanResolver {
     return null;
   }
 
-  private static List<Task> getExplainOrder(PhysicalContext pctx) {
-    List<Task> tasks = getExplainOrder(pctx.getConf(), pctx.getRootTasks());
+  private static List<Task<? extends Serializable>> getExplainOrder(PhysicalContext pctx) {
+    List<Task<? extends Serializable>> tasks = getExplainOrder(pctx.getConf(), pctx.getRootTasks());
     if (pctx.getFetchTask() != null) {
       tasks.add(pctx.getFetchTask());
     }
     return tasks;
   }
 
-  public static List<Task> getFetchSources(List<Task<?>> tasks) {
-    final List<Task> sources = new ArrayList<Task>();
+  public static List<Task<? extends Serializable>> getFetchSources(List<Task<?>> tasks) {
+    final List<Task<? extends Serializable>> sources = new ArrayList<>();
     TaskTraverse traverse = new TaskTraverse() {
       @Override
       protected void accepted(Task<?> task) {
@@ -76,7 +76,7 @@ public class StageIDsRearranger implements PhysicalPlanResolver {
     return sources;
   }
 
-  public static List<Task> getExplainOrder(HiveConf conf, List<Task<?>> tasks) {
+  public static List<Task<? extends Serializable>> getExplainOrder(HiveConf conf, List<Task<?>> tasks) {
     for (Task<? extends Serializable> task : tasks) {
       task.setRootTask(true);
     }
@@ -88,7 +88,7 @@ public class StageIDsRearranger implements PhysicalPlanResolver {
     return traverseOrder(type, tasks);
   }
 
-  private static List<Task> executionOrder(List<Task<?>> tasks) {
+  private static List<Task<? extends Serializable>> executionOrder(List<Task<?>> tasks) {
     final Queue<Task<?>> queue = new ConcurrentLinkedQueue<Task<?>>(tasks);
 
     TaskTraverse traverse = new TaskTraverse() {
@@ -111,10 +111,10 @@ public class StageIDsRearranger implements PhysicalPlanResolver {
     if (!queue.isEmpty()) {
       traverse.traverse(queue.remove());
     }
-    return new ArrayList<Task>(traverse.traversed);
+    return new ArrayList<Task<? extends Serializable>>(traverse.traversed);
   }
 
-  static List<Task> traverseOrder(final ArrangeType type, List<Task<?>> tasks) {
+  static List<Task<? extends Serializable>> traverseOrder(final ArrangeType type, List<Task<?>> tasks) {
 
     TaskTraverse traverse = new TaskTraverse() {
       @Override
@@ -125,7 +125,7 @@ public class StageIDsRearranger implements PhysicalPlanResolver {
     for (Task<? extends Serializable> task : tasks) {
       traverse.traverse(task);
     }
-    return new ArrayList<Task>(traverse.traversed);
+    return new ArrayList<Task<? extends Serializable>>(traverse.traversed);
   }
 
 

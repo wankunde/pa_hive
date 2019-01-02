@@ -79,4 +79,9 @@ public class RuleRegExp implements Rule {
   public String getName() {
     return ruleName;
   }
+
+  @Override
+  public String toString() {
+    return ruleName + " -> " + pattern;
+  }
 }

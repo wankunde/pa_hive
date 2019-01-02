@@ -10259,6 +10259,9 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
 
     // 2. Gen OP Tree from resolved Parse Tree
     Operator sinkOp = genOPTree(ast, plannerCtx);
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Gen OP Tree from resolved Parse Tree\n" + Operator.dumpGraphviz(sinkOp));
+    }
 
     // 3. Deduce Resultset Schema
     if (createVwDesc != null) {
@@ -10320,6 +10323,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     // 7. Perform Logical optimization
     if (LOG.isDebugEnabled()) {
       LOG.debug("Before logical optimization\n" + Operator.toString(pCtx.getTopOps().values()));
+      LOG.debug("Graphviz Message \n" + Operator.dumpGraphviz(pCtx.getTopOps().values()));
     }
     Optimizer optm = new Optimizer();
     optm.setPctx(pCtx);
@@ -10328,6 +10332,7 @@ public class SemanticAnalyzer extends BaseSemanticAnalyzer {
     FetchTask origFetchTask = pCtx.getFetchTask();
     if (LOG.isDebugEnabled()) {
       LOG.debug("After logical optimization\n" + Operator.toString(pCtx.getTopOps().values()));
+      LOG.debug("Graphviz Message \n" + Operator.dumpGraphviz(pCtx.getTopOps().values()));
     }
 
     // 8. Generate column access stats if required - wait until column pruning

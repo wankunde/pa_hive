@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -24,6 +24,7 @@ import java.util.List;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
 
@@ -108,10 +109,19 @@ public class PhysicalOptimizer {
    */
   public PhysicalContext optimize() throws SemanticException {
     for (PhysicalPlanResolver r : resolvers) {
-      LOG.debug("start physical optimize by " + r);
-      // deal and log with pctx.getRootTasks()
+      String debugInfo = "";
+      if (LOG.isDebugEnabled()) {
+        debugInfo = Task.dumpGraphviz(pctx.getRootTasks());
+      }
+
       pctx = r.resolve(pctx);
-      LOG.debug("end physical optimize by " + r);
+      if (LOG.isDebugEnabled()) {
+        String newDebugInfo = Task.dumpGraphviz(pctx.getRootTasks());
+        if (!debugInfo.equals(newDebugInfo)) {
+          LOG.debug("start physical optimize by " + r + "\n" + debugInfo);
+          LOG.debug("end physical optimize by " + r + "\n" + newDebugInfo);
+        }
+      }
     }
     return pctx;
   }

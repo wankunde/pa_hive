@@ -37,11 +37,7 @@ import org.apache.hadoop.hive.ql.exec.mr.ExecMapperContext;
 import org.apache.hadoop.hive.ql.lib.Node;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
-import org.apache.hadoop.hive.ql.plan.Explain;
-import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
-import org.apache.hadoop.hive.ql.plan.OpTraits;
-import org.apache.hadoop.hive.ql.plan.OperatorDesc;
-import org.apache.hadoop.hive.ql.plan.Statistics;
+import org.apache.hadoop.hive.ql.plan.*;
 import org.apache.hadoop.hive.ql.plan.api.OperatorType;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
@@ -903,6 +899,10 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
     return s.toString();
   }
 
+  public static String dumpGraphviz(Collection<Operator<? extends OperatorDesc>> ops) {
+    return dumpGraphviz(ops.toArray(new Operator[ops.size()]));
+  }
+
   /**
    * get tree.dot which we can generator tree picture by graphviz.
    * dot tree.dot -Tpng -o optree.png
@@ -911,10 +911,11 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
   public static String dumpGraphviz(Operator... ops) {
     StringBuilder res = new StringBuilder();
     res.append("digraph opTree { \n");
-    res.append("rankdir = LR;");
     res.append("node [shape = box, color = black, fontname = Courier];");
     res.append("edge [color = blue];");
+    res.append("\n\n");
     Set<Operator> tops = new HashSet<>();
+    Set<Operator> visited = new HashSet<>();
     Stack<Operator> stack = new Stack<>();
     for(Operator op:ops)
       stack.add(op);
@@ -927,15 +928,32 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
         tops.add(p);
     }
     stack.addAll(tops);
+    Set<Operator> allNodes = new HashSet<>();
     while(!stack.isEmpty()) {
       Operator parent = stack.pop();
+      if(visited.contains(parent))
+        continue;
+      else
+        visited.add(parent);
+
+      allNodes.add(parent);
       List<Operator<? extends OperatorDesc>> childOperators = parent.getChildOperators();
       if(childOperators != null && childOperators.size() > 0){
         stack.addAll(childOperators);
         for(Operator child:childOperators){
-          res.append("\"" +parent +"\" -> \"" +child +"\"\n");
+          res.append("\"" + parent + "\" -> \"" + child +"\"\n");
         }
       }
+    }
+
+    for(Operator p:allNodes) {
+      String label = null;
+      if(p instanceof TableScanOperator) {
+        TableScanDesc tsDesc = (TableScanDesc)p.getConf();
+        label = "label=\"" + p + "\n" + tsDesc.getAlias() + ":" + tsDesc.getTableMetadata() +"\"";
+      }
+      if(label != null)
+        res.append("\"" +p +"\"[" + label +"]\n");
     }
     res.append("}");
     return res.toString();

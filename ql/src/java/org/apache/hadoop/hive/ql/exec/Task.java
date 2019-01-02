@@ -20,18 +20,14 @@ package org.apache.hadoop.hive.ql.exec;
 
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.*;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.ql.DriverContext;
 import org.apache.hadoop.hive.ql.QueryPlan;
+import org.apache.hadoop.hive.ql.exec.mr.MapRedTask;
 import org.apache.hadoop.hive.ql.lib.Node;
 import org.apache.hadoop.hive.ql.metadata.Hive;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
@@ -540,6 +536,64 @@ public abstract class Task<T extends Serializable> implements Serializable, Node
   @Override
   public String toString() {
     return getId() + ":" + getType();
+  }
+
+  public static String dumpGraphviz(Task<? extends Serializable> task) {
+    List<Task<? extends Serializable>> tasks = new ArrayList<>();
+    tasks.add(task);
+    return dumpGraphviz(tasks);
+  }
+
+  public static String dumpGraphviz(Collection<Task<? extends Serializable>> tasks) {
+    StringBuilder res = new StringBuilder();
+    res.append("digraph tasks { \n");
+    res.append("node [shape = box, color = black, fontname = Courier];");
+    res.append("edge [color = blue];");
+    res.append("\n\n");
+
+    HashSet<Task<? extends Serializable>> visited = new HashSet<>();
+    Stack<Task<? extends Serializable>> stack = new Stack<>();
+    for(Task task:tasks) {
+      stack.push(task);
+    }
+    while(!stack.empty()) {
+      Task<? extends Serializable> task = stack.pop();
+      if(visited.contains(task))
+        continue;
+      else
+        visited.add(task);
+
+      if (task.getParentTasks() != null && !task.getParentTasks().isEmpty()) {
+        for(Task<? extends Serializable> parent : task.getParentTasks()) {
+          if(!visited.contains(parent))
+            stack.add(parent);
+          res.append("\"" + parent +"\" -> \"" + task +"\"\n");
+        }
+      }
+
+      Task<? extends Serializable> currBackupTask = task.getBackupTask();
+      if (currBackupTask != null) {
+        if(!visited.contains(currBackupTask))
+          stack.add(currBackupTask);
+        res.append("\"" + task +"\" -> \"" + currBackupTask +"\" [style=dashed,label=backup]\n");
+        res.append("\"" + currBackupTask +"\"[style=filled, fillcolor=orange];\n");
+      }
+
+      if (task instanceof ConditionalTask
+              && ((ConditionalTask) task).getListTasks() != null) {
+        res.append("subgraph \"cluster_" + task.getId() + "\" { \n");
+        res.append("  bgcolor=mintcream;\n");
+        for (Task<? extends Serializable> con : ((ConditionalTask) task).getListTasks()) {
+          if(!visited.contains(con))
+            stack.add(con);
+          res.append("\"" + task +"\" -> \"" + con +"\" [color=red,label=consists]\n");
+          res.append("\"" + con +"\"[style=filled, fillcolor=green];\n");
+        }
+        res.append("}\n");
+      }
+    }
+    res.append("}");
+    return res.toString();
   }
 
   public int hashCode() {
