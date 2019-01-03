@@ -20,6 +20,10 @@ package org.apache.hadoop.hive.ql.parse;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Stack;
 
 import org.antlr.runtime.Token;
 import org.antlr.runtime.tree.CommonTree;
@@ -125,5 +129,56 @@ public class ASTNode extends CommonTree implements Node,Serializable {
       }
     }
     return sb;
+  }
+
+  public String escapeWhitespace(String s, boolean escapeSpaces) {
+    StringBuilder buf = new StringBuilder();
+    for (char c : s.toCharArray()) {
+      if (c == ' ' && escapeSpaces) buf.append('\u00B7');
+      else if (c == '\t') buf.append("\\t");
+      else if (c == '\n') buf.append("\\n");
+      else if (c == '\r') buf.append("\\r");
+      else buf.append(c);
+    }
+    return buf.toString();
+  }
+
+  public String dumpGraphviz() {
+    List<ASTNode[]> relations = new ArrayList<>();
+    Map<ASTNode, Integer> nodeMap = new LinkedHashMap<>();
+    int p = 0;
+
+    String buf = "digraph ast{ \n";
+    buf += "  node [shape=plaintext]; \n";
+    buf += "  \n";
+
+    Stack<ASTNode> toVisit = new Stack<>();
+    toVisit.push(this);
+    nodeMap.put(this, p++);
+    while (!toVisit.empty()) {
+      ASTNode currNode = toVisit.pop();
+      if (nodeMap.get(currNode) == null) {
+        nodeMap.put(currNode, p++);
+      }
+      List<? extends Node> children = currNode.getChildren();
+      if (children != null) {
+        for (Node child : currNode.getChildren()) {
+          toVisit.push((ASTNode) child);
+          if (nodeMap.get(child) == null)
+            nodeMap.put((ASTNode) child, p++);
+          relations.add(new ASTNode[]{currNode, (ASTNode) child});
+        }
+      }
+    }
+
+    for (Map.Entry<ASTNode, Integer> en : nodeMap.entrySet()) {
+      String nodeName = en.getKey() != null && en.getKey().getToken() != null ? en.getKey().toString() : "Nil";
+      buf += "  p" + en.getValue() + "[label=\"" + escapeWhitespace(nodeName, false) + " \"]" + ";  \n";
+    }
+    for (Node[] r : relations) {
+      buf += "  p" + nodeMap.get(r[0]) + " -> p" + nodeMap.get(r[1]) + "; \n";
+    }
+    buf += "} \n";
+    return buf;
   }
 }
