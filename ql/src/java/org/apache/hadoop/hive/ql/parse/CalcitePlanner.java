@@ -222,8 +222,16 @@ public class CalcitePlanner extends SemanticAnalyzer {
         boolean reAnalyzeAST = false;
 
         try {
+          if(LOG.isDebugEnabled()) {
+            LOG.debug("Before optimize AST \n" + ASTNode.dumpGraphviz(getAST()));
+            LOG.debug("Before optimize QueryBlock \n" + QB.dumpGraphviz(getQB()));
+          }
           // 1. Gen Optimized AST
           ASTNode newAST = getOptimizedAST();
+          if(LOG.isDebugEnabled()) {
+            LOG.debug("After optimize AST \n" + ASTNode.dumpGraphviz(getAST()));
+            LOG.debug("After optimize QueryBlock \n" + QB.dumpGraphviz(getQB()));
+          }
 
           // 1.1. Fix up the query for insert/ctas
           newAST = fixUpCtasAndInsertAfterCbo(ast, newAST, cboCtx);
@@ -297,7 +305,6 @@ public class CalcitePlanner extends SemanticAnalyzer {
    * @param qb
    *          top level QB corresponding to the AST
    * @param cboCtx
-   * @param semAnalyzer
    * @return boolean
    *
    *         Assumption:<br>

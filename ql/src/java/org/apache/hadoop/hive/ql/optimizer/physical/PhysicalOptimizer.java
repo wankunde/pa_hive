@@ -118,8 +118,8 @@ public class PhysicalOptimizer {
       if (LOG.isDebugEnabled()) {
         String newDebugInfo = Task.dumpGraphviz(pctx.getRootTasks());
         if (!debugInfo.equals(newDebugInfo)) {
-          LOG.debug("start physical optimize by " + r + "\n" + debugInfo);
-          LOG.debug("end physical optimize by " + r + "\n" + newDebugInfo);
+          LOG.debug("before physical optimize by " + r + "\n" + debugInfo);
+          LOG.debug("after physical optimize by " + r + "\n" + newDebugInfo);
         }
       }
     }

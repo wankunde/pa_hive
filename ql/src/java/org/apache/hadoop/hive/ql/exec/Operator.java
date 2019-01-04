@@ -917,8 +917,12 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
     Set<Operator> tops = new HashSet<>();
     Set<Operator> visited = new HashSet<>();
     Stack<Operator> stack = new Stack<>();
-    for(Operator op:ops)
+    Set<Operator> origin = new HashSet<>();
+    for(Operator op:ops) {
       stack.add(op);
+      origin.add(op);
+    }
+
 
     while(!stack.isEmpty()) {
       Operator p = stack.pop();
@@ -947,13 +951,18 @@ public abstract class Operator<T extends OperatorDesc> implements Serializable,C
     }
 
     for(Operator p:allNodes) {
-      String label = null;
+      String nodeConf = "";
       if(p instanceof TableScanOperator) {
         TableScanDesc tsDesc = (TableScanDesc)p.getConf();
-        label = "label=\"" + p + "\n" + tsDesc.getAlias() + ":" + tsDesc.getTableMetadata() +"\"";
+        nodeConf = "label=\"" + p + "\n" + tsDesc.getAlias() + ":" + tsDesc.getTableMetadata() +"\",";
       }
-      if(label != null)
-        res.append("\"" +p +"\"[" + label +"]\n");
+      if(origin.contains(p)) {
+        String color = "fillcolor=\"chartreuse\",style=\"filled\",";
+        nodeConf += color;
+      }
+
+      if(nodeConf.length() > 0)
+        res.append("\"" +p +"\"[" + nodeConf +"]\n");
     }
     res.append("}");
     return res.toString();

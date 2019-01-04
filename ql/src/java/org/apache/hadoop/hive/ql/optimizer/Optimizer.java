@@ -193,8 +193,8 @@ public class Optimizer {
       if (LOG.isDebugEnabled()) {
         String newDebugInfo = Operator.dumpGraphviz(pctx.getTopOps().values());
         if (!debugInfo.equals(newDebugInfo)) {
-          LOG.debug("start transform " + t + "\n" + debugInfo);
-          LOG.debug("end transform " + t + "\n" + newDebugInfo);
+          LOG.debug("before transform " + t + "\n" + debugInfo);
+          LOG.debug("after transform " + t + "\n" + newDebugInfo);
         }
       }
 

@@ -212,7 +212,7 @@ public class ParseDriver {
 
     ASTNode tree = (ASTNode) r.getTree();
     if(LOG.isDebugEnabled()) {
-      LOG.debug("AST Tree for graphviz : \n" + tree.dumpGraphviz());
+      LOG.debug("AST Tree for graphviz : \n" + ASTNode.dumpGraphviz(tree));
     }
     tree.setUnknownTokenBoundaries();
     return tree;

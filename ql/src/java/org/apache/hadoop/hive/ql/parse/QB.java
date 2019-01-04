@@ -22,9 +22,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Stack;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -100,6 +102,68 @@ public class QB {
       LOG.info(msg + "start subquery " + alias);
       qbexpr.print(msg + " ");
       LOG.info(msg + "end subquery " + alias);
+    }
+  }
+
+  public static String dumpGraphviz(QB root) {
+    Stack<QB> toVisited = new Stack();
+    Map<QB, String> nodes = new LinkedHashMap<>();
+    Map<QB, String> labels = new LinkedHashMap<>();
+    List<QB[]> relations = new LinkedList<>();
+
+    toVisited.push(root);
+    labels.put(root, root.getId());
+    nodes.put(root, "\"" + root.getId() + "\"");
+    while (!toVisited.empty()) {
+      QB qb = toVisited.pop();
+      Map<String, QBExpr> aliasToSubq = qb.aliasToSubq;
+      if (aliasToSubq != null) {
+        for (Map.Entry<String, QBExpr> en : aliasToSubq.entrySet()) {
+          QBExpr qbExpr = en.getValue();
+          if (qbExpr != null)
+            handleQbExpr(toVisited, nodes, labels, relations, qb, qbExpr);
+          qbExpr = en.getValue().getQBExpr1();
+          if (qbExpr != null)
+            handleQbExpr(toVisited, nodes, labels, relations, qb, qbExpr);
+          qbExpr = en.getValue().getQBExpr2();
+          if (qbExpr != null)
+            handleQbExpr(toVisited, nodes, labels, relations, qb, qbExpr);
+        }
+      }
+    }
+
+    StringBuilder res = new StringBuilder();
+    res.append("digraph QB { \n");
+    res.append("  node [shape = box, color = black, fontname = Courier];\n");
+    res.append("  edge [color = blue];\n");
+    res.append("  \n");
+    for (Map.Entry<QB, String> en : labels.entrySet()) {
+      res.append("  " + nodes.get(en.getKey()) + "[label=" + en.getValue() + "];\n");
+    }
+    for(QB[] pair : relations) {
+      res.append("  " + nodes.get(pair[0]) + "->" + nodes.get(pair[1]) + ";\n");
+    }
+    res.append("} \n");
+    return res.toString();
+  }
+
+  private static void handleQbExpr(Stack<QB> toVisited, Map<QB, String> nodes, Map<QB, String> labels,
+                                   List<QB[]> relations, QB qb, QBExpr qbExpr) {
+    QB child = qbExpr.getQB();
+    if (child != null) {
+      String label = child.getId() + " " + qbExpr.getOpcode();
+      String id = "\"" + child.getId() + "\"";
+      toVisited.push(child);
+      if (child.aliasToTabs != null) {
+        for (Map.Entry<String, String> aliasToTab : child.aliasToTabs.entrySet()) {
+          label += " \\n " + aliasToTab.getKey() + "-> " + aliasToTab.getValue();
+        }
+      }
+
+      label = "\"" + label + "\"";
+      labels.put(child, label);
+      nodes.put(child, id);
+      relations.add(new QB[]{qb, child });
     }
   }
 

@@ -131,7 +131,7 @@ public class ASTNode extends CommonTree implements Node,Serializable {
     return sb;
   }
 
-  public String escapeWhitespace(String s, boolean escapeSpaces) {
+  public static String escapeWhitespace(String s, boolean escapeSpaces) {
     StringBuilder buf = new StringBuilder();
     for (char c : s.toCharArray()) {
       if (c == ' ' && escapeSpaces) buf.append('\u00B7');
@@ -143,7 +143,7 @@ public class ASTNode extends CommonTree implements Node,Serializable {
     return buf.toString();
   }
 
-  public String dumpGraphviz() {
+  public static String dumpGraphviz(ASTNode astNode) {
     List<ASTNode[]> relations = new ArrayList<>();
     Map<ASTNode, Integer> nodeMap = new LinkedHashMap<>();
     int p = 0;
@@ -153,8 +153,8 @@ public class ASTNode extends CommonTree implements Node,Serializable {
     buf += "  \n";
 
     Stack<ASTNode> toVisit = new Stack<>();
-    toVisit.push(this);
-    nodeMap.put(this, p++);
+    toVisit.push(astNode);
+    nodeMap.put(astNode, p++);
     while (!toVisit.empty()) {
       ASTNode currNode = toVisit.pop();
       if (nodeMap.get(currNode) == null) {

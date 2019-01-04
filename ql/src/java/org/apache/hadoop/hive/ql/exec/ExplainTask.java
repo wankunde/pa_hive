@@ -194,8 +194,10 @@ public class ExplainTask extends Task<ExplainWork> implements Serializable {
 
     List<Task<? extends Serializable>> ordered = StageIDsRearranger.getExplainOrder(conf, tasks);
 
-    out.println("TASK GRAPH");
-    out.println(Task.dumpGraphviz(ordered));
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("TASK GRAPH");
+      LOG.debug(Task.dumpGraphviz(ordered));
+    }
 
     if (fetchTask != null) {
       fetchTask.setParentTasks((List)StageIDsRearranger.getFetchSources(tasks));
